@@ -178,6 +178,10 @@ class DayTradingBot:
         # LLM provider
         print(f"\n🤖 AI Provider: {self.llm_provider.provider_name} ({self.llm_provider.model})")
 
+        # Trading mode
+        trading_mode = "🤖 AUTO-TRADING" if self.settings.enable_auto_trading else "👤 MANUAL APPROVAL"
+        print(f"⚙️  Trading Mode: {trading_mode}")
+
         # Market status
         try:
             market_open = self.broker.is_market_open()
@@ -269,28 +273,57 @@ class DayTradingBot:
             # Calculate estimated cost
             estimated_cost = quantity * current_price
 
-            # Request approval
-            approved = self.approval.request_approval(
-                signal=signal,
-                risk_decision=risk_decision,
-                estimated_cost=estimated_cost
-            )
+            # Check if auto-trading is enabled
+            if self.settings.enable_auto_trading:
+                # Auto-trading mode: Only check risk manager approval
+                if not risk_decision.approved:
+                    logger.warning(f"Auto-trade blocked by risk manager: {risk_decision.reason}")
+                    print(f"\n⚠️  AUTO-TRADE BLOCKED")
+                    print(f"Symbol: {signal.symbol}")
+                    print(f"Action: {signal.signal}")
+                    print(f"Reason: {risk_decision.reason}")
+                    if risk_decision.warnings:
+                        print(f"Warnings:")
+                        for warning in risk_decision.warnings:
+                            print(f"  - {warning}")
+                    return False
 
-            if not approved:
-                logger.info("Trade not approved")
-                return False
+                # Use recommended quantity from risk manager
+                final_quantity = risk_decision.recommended_quantity or quantity
 
-            # Get final quantity (user may have adjusted it)
-            final_quantity = self.approval.get_quantity_approval(
-                symbol=signal.symbol,
-                side=side,
-                recommended_quantity=quantity,
-                price=current_price
-            )
+                # Log auto-execution
+                logger.info(f"🤖 AUTO-EXECUTING: {side.upper()} {final_quantity} {signal.symbol}")
+                print(f"\n🤖 AUTO-EXECUTING TRADE")
+                print(f"Symbol: {signal.symbol}")
+                print(f"Action: {signal.signal}")
+                print(f"Quantity: {final_quantity} shares")
+                print(f"Price: ~${current_price:.2f}")
+                print(f"Estimated Cost: ${estimated_cost:.2f}")
+                print(f"Confidence: {signal.confidence}%")
+                print(f"Reasoning: {signal.reasoning}")
+            else:
+                # Manual approval mode
+                approved = self.approval.request_approval(
+                    signal=signal,
+                    risk_decision=risk_decision,
+                    estimated_cost=estimated_cost
+                )
 
-            if not final_quantity:
-                logger.info("Trade cancelled during quantity approval")
-                return False
+                if not approved:
+                    logger.info("Trade not approved")
+                    return False
+
+                # Get final quantity (user may have adjusted it)
+                final_quantity = self.approval.get_quantity_approval(
+                    symbol=signal.symbol,
+                    side=side,
+                    recommended_quantity=quantity,
+                    price=current_price
+                )
+
+                if not final_quantity:
+                    logger.info("Trade cancelled during quantity approval")
+                    return False
 
             # Execute trade
             logger.info(f"Executing: {side.upper()} {final_quantity} {signal.symbol}")

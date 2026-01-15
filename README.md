@@ -11,7 +11,9 @@ An intelligent day trading system that uses Large Language Models (LLMs) to anal
 - **Sentiment Analysis**: Market and stock-specific sentiment from news, analysts, and momentum
 - **Batch Trading**: Approve multiple recommendations at once for efficiency
 - **Risk Management**: Comprehensive risk controls including position limits, daily loss limits, and exposure caps
-- **Manual Approval**: Conservative approach with manual approval required for all trades
+- **Trading Modes**: Choose between manual approval or auto-trading mode (see [AUTO_TRADING.md](AUTO_TRADING.md))
+- **Manual Approval**: Conservative default mode with approval required for all trades
+- **Auto-Trading**: Advanced mode for hands-free execution (still respects all risk limits)
 - **Paper Trading**: Safe testing environment with Alpaca paper trading
 - **Real-time Data**: Live market data and technical indicator calculations
 - **Extensible Architecture**: Clean, modular design for easy customization
@@ -353,6 +355,7 @@ Modify `src/strategy/market_analyzer.py` to:
 
 ## Additional Documentation
 
+- **[AUTO_TRADING.md](AUTO_TRADING.md)** - Auto-trading vs manual approval modes
 - **[SHORT_SELLING.md](SHORT_SELLING.md)** - Complete guide to short selling stocks
 - **[PORTFOLIO_AWARENESS.md](PORTFOLIO_AWARENESS.md)** - Portfolio tracking and trade history
 - **[SENTIMENT_ANALYSIS.md](SENTIMENT_ANALYSIS.md)** - Market and stock sentiment features
