@@ -1,0 +1,38 @@
+# AI Day Trading System Requirements
+
+# Core dependencies
+python-dotenv==1.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Trading APIs
+alpaca-py==0.12.0
+yfinance==0.2.33
+
+# LLM Providers
+anthropic>=0.40.0
+openai>=1.12.0
+# google-generativeai==0.3.2  # Optional: Uncomment if you want to use Google Gemini (requires Python 3.10+)
+
+# HTTP client (required for anthropic)
+httpx>=0.25.0
+
+# Data processing
+pandas==2.1.4
+numpy==1.26.2
+
+# Sentiment Analysis
+textblob==0.17.1
+
+# Utilities
+requests==2.31.0
+python-dateutil==2.8.2
+pytz==2023.3
+urllib3<2.0.0  # Fix SSL compatibility with Python 3.9
+
+# Logging and monitoring
+coloredlogs==15.0.1
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1

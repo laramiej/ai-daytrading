@@ -1,0 +1,102 @@
+"""
+Configuration Management
+Loads and validates configuration from environment variables
+"""
+import os
+from typing import Optional, List
+from pydantic import Field
+from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables"""
+
+    # Alpaca API Keys
+    alpaca_api_key: str = Field(..., env="ALPACA_API_KEY")
+    alpaca_secret_key: str = Field(..., env="ALPACA_SECRET_KEY")
+    alpaca_paper_trading: bool = Field(True, env="ALPACA_PAPER_TRADING")
+
+    # LLM API Keys
+    anthropic_api_key: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
+    openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
+    google_api_key: Optional[str] = Field(None, env="GOOGLE_API_KEY")
+
+    # Trading Configuration
+    default_llm_provider: str = Field("anthropic", env="DEFAULT_LLM_PROVIDER")
+    max_position_size: float = Field(1000.0, env="MAX_POSITION_SIZE")
+    max_daily_loss: float = Field(500.0, env="MAX_DAILY_LOSS")
+    max_total_exposure: float = Field(5000.0, env="MAX_TOTAL_EXPOSURE")
+    enable_auto_trading: bool = Field(False, env="ENABLE_AUTO_TRADING")
+
+    # Risk Management
+    stop_loss_percentage: float = Field(2.0, env="STOP_LOSS_PERCENTAGE")
+    take_profit_percentage: float = Field(5.0, env="TAKE_PROFIT_PERCENTAGE")
+    max_open_positions: int = Field(5, env="MAX_OPEN_POSITIONS")
+    enable_short_selling: bool = Field(True, env="ENABLE_SHORT_SELLING")
+
+    # Market Data
+    watchlist: str = Field(
+        "AAPL,MSFT,GOOGL,AMZN,TSLA,NVDA,META,AMD,NFLX,SPY",
+        env="WATCHLIST"
+    )
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+
+    def get_watchlist(self) -> List[str]:
+        """Parse watchlist into list of symbols"""
+        return [s.strip() for s in self.watchlist.split(",") if s.strip()]
+
+    def get_llm_api_key(self, provider: Optional[str] = None) -> Optional[str]:
+        """
+        Get API key for specified LLM provider
+
+        Args:
+            provider: Provider name (anthropic, openai, google)
+                     If None, uses default provider
+
+        Returns:
+            API key or None if not configured
+        """
+        provider = provider or self.default_llm_provider
+
+        key_map = {
+            "anthropic": self.anthropic_api_key,
+            "openai": self.openai_api_key,
+            "google": self.google_api_key
+        }
+
+        return key_map.get(provider.lower())
+
+    def validate_llm_config(self, provider: Optional[str] = None) -> tuple[bool, str]:
+        """
+        Validate LLM provider configuration
+
+        Args:
+            provider: Provider name to validate (or default if None)
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        provider = provider or self.default_llm_provider
+
+        api_key = self.get_llm_api_key(provider)
+
+        if not api_key:
+            return False, f"API key for '{provider}' not configured"
+
+        return True, ""
+
+
+def load_settings() -> Settings:
+    """Load and return settings"""
+    try:
+        settings = Settings()
+        return settings
+    except Exception as e:
+        raise Exception(f"Failed to load settings: {str(e)}")
