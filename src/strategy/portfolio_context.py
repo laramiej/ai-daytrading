@@ -245,9 +245,22 @@ class PortfolioContext:
         position_details = self.get_position_details(symbol) if has_position else None
 
         if has_position:
-            recommendations["reasons"].append(
-                f"Currently holding {position_details['quantity']} shares"
-            )
+            position_side = position_details.get('side', 'long').upper()
+
+            if position_side == "LONG":
+                recommendations["reasons"].append(
+                    f"Currently LONG {position_details['quantity']} shares"
+                )
+                recommendations["considerations"].append(
+                    "BUY = add to long position, SELL = close long position"
+                )
+            else:
+                recommendations["reasons"].append(
+                    f"Currently SHORT {position_details['quantity']} shares"
+                )
+                recommendations["considerations"].append(
+                    "BUY = close short (buy to cover), SELL = add to short position"
+                )
 
             if position_details["pnl_percent"] > 0:
                 recommendations["considerations"].append(
@@ -259,9 +272,16 @@ class PortfolioContext:
                 )
         else:
             # No position - can short sell if enabled
+            recommendations["considerations"].append(
+                "No position held - BUY opens a LONG position"
+            )
             if self.risk_manager.limits.enable_short_selling:
                 recommendations["considerations"].append(
-                    "No position held - SELL would be a short sale"
+                    "SELL would open a SHORT position (profit from decline)"
+                )
+            else:
+                recommendations["considerations"].append(
+                    "SELL not available (short selling disabled)"
                 )
 
         # Check position limits
@@ -385,8 +405,11 @@ class PortfolioContext:
         if pos["details"]:
             for p in pos["details"]:
                 pnl_sign = "+" if p["pnl"] >= 0 else ""
+                # Distinguish between LONG and SHORT positions
+                side_str = p.get('side', 'long').upper()
+                side_emoji = "📈" if side_str == "LONG" else "📉"
                 lines.append(
-                    f"  • {p['symbol']}: {p['quantity']} shares @ ${p['entry_price']:.2f} "
+                    f"  {side_emoji} {p['symbol']}: {side_str} {p['quantity']} shares @ ${p['entry_price']:.2f} "
                     f"({pnl_sign}{p['pnl_percent']:.2f}%)"
                 )
         else:

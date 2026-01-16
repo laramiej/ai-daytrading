@@ -3,8 +3,8 @@ Alpaca Broker Integration
 Handles all interactions with Alpaca trading API
 """
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
-from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, TakeProfitRequest, StopLossRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -38,6 +38,8 @@ class Order:
     order_type: str
     status: str
     filled_price: Optional[float] = None
+    limit_price: Optional[float] = None
+    stop_price: Optional[float] = None
 
 
 class AlpacaBroker:
@@ -100,9 +102,21 @@ class AlpacaBroker:
             for pos in positions:
                 current_price = float(pos.current_price)
                 entry_price = float(pos.avg_entry_price)
-                quantity = float(pos.qty)
+                # Alpaca returns negative qty for short positions, but we use the 'side' field
+                # to track long/short. Always store positive quantity for consistency.
+                quantity = abs(float(pos.qty))
                 pnl = float(pos.unrealized_pl)
                 pnl_percent = float(pos.unrealized_plpc) * 100
+
+                # Get the side value - Alpaca returns an enum, we need the string value
+                raw_side = pos.side
+                if hasattr(raw_side, 'value'):
+                    side_value = raw_side.value
+                else:
+                    side_value = str(raw_side)
+                # Ensure it's lowercase for consistent comparison
+                side_value = side_value.lower()
+                logger.debug(f"Position {pos.symbol}: raw_side={raw_side}, type={type(raw_side)}, side_value={side_value}")
 
                 result.append(Position(
                     symbol=pos.symbol,
@@ -111,7 +125,7 @@ class AlpacaBroker:
                     current_price=current_price,
                     pnl=pnl,
                     pnl_percent=pnl_percent,
-                    side=pos.side
+                    side=side_value
                 ))
 
             return result
@@ -133,7 +147,9 @@ class AlpacaBroker:
                     side=order.side.value,
                     order_type=order.type.value,
                     status=order.status.value,
-                    filled_price=float(order.filled_avg_price) if order.filled_avg_price else None
+                    filled_price=float(order.filled_avg_price) if order.filled_avg_price else None,
+                    limit_price=float(order.limit_price) if order.limit_price else None,
+                    stop_price=float(order.stop_price) if order.stop_price else None
                 ))
 
             return result
@@ -232,6 +248,100 @@ class AlpacaBroker:
             )
         except Exception as e:
             logger.error(f"Error placing limit order: {e}")
+            raise
+
+    def place_bracket_order(
+        self,
+        symbol: str,
+        quantity: float,
+        side: str,
+        take_profit_price: Optional[float] = None,
+        stop_loss_price: Optional[float] = None
+    ) -> Order:
+        """
+        Place a bracket order with optional take-profit and stop-loss
+
+        A bracket order enters a position and automatically places protective
+        exit orders. When one exit order fills, the other is canceled.
+
+        Args:
+            symbol: Stock symbol
+            quantity: Number of shares
+            side: 'buy' or 'sell'
+            take_profit_price: Limit price for take-profit exit (optional)
+            stop_loss_price: Stop price for stop-loss exit (optional)
+
+        Returns:
+            Order object for the entry order
+        """
+        try:
+            order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+
+            # Build the order request based on what's provided
+            if take_profit_price and stop_loss_price:
+                # Full bracket order with both legs
+                request = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY,
+                    order_class=OrderClass.BRACKET,
+                    take_profit=TakeProfitRequest(limit_price=take_profit_price),
+                    stop_loss=StopLossRequest(stop_price=stop_loss_price)
+                )
+                order_type_desc = "bracket"
+            elif stop_loss_price:
+                # OTO order with just stop-loss
+                request = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY,
+                    order_class=OrderClass.OTO,
+                    stop_loss=StopLossRequest(stop_price=stop_loss_price)
+                )
+                order_type_desc = "OTO (stop-loss only)"
+            elif take_profit_price:
+                # OTO order with just take-profit
+                request = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY,
+                    order_class=OrderClass.OTO,
+                    take_profit=TakeProfitRequest(limit_price=take_profit_price)
+                )
+                order_type_desc = "OTO (take-profit only)"
+            else:
+                # No protective orders, just a regular market order
+                request = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY
+                )
+                order_type_desc = "market"
+
+            order = self.trading_client.submit_order(request)
+
+            # Log the order details
+            log_parts = [f"{order_type_desc.upper()} order placed: {side.upper()} {quantity} shares of {symbol}"]
+            if take_profit_price:
+                log_parts.append(f"TP: ${take_profit_price:.2f}")
+            if stop_loss_price:
+                log_parts.append(f"SL: ${stop_loss_price:.2f}")
+            logger.info(" | ".join(log_parts))
+
+            return Order(
+                order_id=order.id,
+                symbol=order.symbol,
+                quantity=float(order.qty),
+                side=order.side.value,
+                order_type=order.type.value,
+                status=order.status.value
+            )
+        except Exception as e:
+            logger.error(f"Error placing bracket order: {e}")
             raise
 
     def cancel_order(self, order_id: str) -> bool:

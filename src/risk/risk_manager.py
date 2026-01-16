@@ -29,6 +29,7 @@ class RiskLimits:
     take_profit_percentage: float  # Default take profit %
     max_open_positions: int  # Maximum concurrent positions
     enable_short_selling: bool = True  # Allow short selling
+    max_position_exposure_percent: float = 25.0  # Max % of total exposure per position
 
 
 class RiskManager:
@@ -110,9 +111,23 @@ class RiskManager:
                 reason="Unable to verify open positions"
             )
 
-        # Check 3: Maximum open positions (for buy orders and new short positions)
-        # For buys or new short positions (not closing existing), check position limit
-        is_new_position = side.lower() == "buy" or (side.lower() == "sell" and not existing_position)
+        # Check 3: Maximum open positions (for new positions only)
+        # Determine position side if we have an existing position
+        existing_side = None
+        if existing_position:
+            existing_side = existing_position.side.lower() if hasattr(existing_position.side, 'lower') else str(existing_position.side).lower()
+
+        # A position is "new" only if it opens a fresh position, not if it closes an existing one
+        # BUY + no position = new long
+        # BUY + short position = closing short (NOT new)
+        # BUY + long position = adding to long (NOT new, just increasing)
+        # SELL + no position = new short
+        # SELL + long position = closing long (NOT new)
+        # SELL + short position = adding to short (NOT new, just increasing)
+        is_new_position = (
+            (side.lower() == "buy" and not existing_position) or
+            (side.lower() == "sell" and not existing_position)
+        )
         if is_new_position:
             if len(positions) >= self.limits.max_open_positions:
                 logger.warning(f"TRADE BLOCKED [{symbol}]: Maximum open positions reached ({len(positions)} / {self.limits.max_open_positions})")
@@ -121,17 +136,38 @@ class RiskManager:
                     reason=f"Maximum open positions reached ({len(positions)} / {self.limits.max_open_positions})"
                 )
 
-        # Check 4: Total exposure limit
+        # Check 4: Total exposure limit (only for new positions that increase exposure)
         try:
             account = self.broker.get_account_info()
             current_exposure = float(account["portfolio_value"]) - float(account["cash"])
 
-            if side.lower() == "buy":
-                new_exposure = current_exposure + trade_value
-            else:
+            # Determine if this trade increases exposure
+            # Key insight: CLOSING any position (long or short) REDUCES exposure
+            if side.lower() == "buy" and existing_side == "short":
+                # Buying to cover an existing SHORT position REDUCES exposure
                 new_exposure = current_exposure - trade_value
+                increases_exposure = False
+                logger.info(f"BUY to cover SHORT for {symbol} - reduces exposure")
+            elif side.lower() == "buy":
+                # Opening new long or adding to long increases exposure
+                new_exposure = current_exposure + trade_value
+                increases_exposure = True
+            elif side.lower() == "sell" and existing_side == "long":
+                # Selling an existing LONG position REDUCES exposure
+                new_exposure = current_exposure - trade_value
+                increases_exposure = False
+                logger.info(f"SELL to close LONG for {symbol} - reduces exposure")
+            elif side.lower() == "sell" and existing_side == "short":
+                # Adding to existing SHORT position increases exposure
+                new_exposure = current_exposure + trade_value
+                increases_exposure = True
+            else:
+                # Opening a new short position increases exposure (liability)
+                new_exposure = current_exposure + trade_value
+                increases_exposure = True
 
-            if new_exposure > self.limits.max_total_exposure:
+            # Only block if exposure would increase beyond limit
+            if increases_exposure and new_exposure > self.limits.max_total_exposure:
                 logger.warning(f"TRADE BLOCKED [{symbol}]: Total exposure would exceed limit (${new_exposure:.2f} / ${self.limits.max_total_exposure:.2f})")
                 return TradeDecision(
                     approved=False,
@@ -164,19 +200,33 @@ class RiskManager:
                     reason="Unable to verify buying power"
                 )
 
-        # Check 6: Handle SELL orders (existing position or short sell)
+        # Check 6: Handle BUY orders that close SHORT positions
+        if side.lower() == "buy" and existing_side == "short":
+            # Buying to cover a short position
+            if existing_position.quantity < quantity:
+                logger.warning(f"TRADE BLOCKED [{symbol}]: Cannot buy more than short position (short {existing_position.quantity}, trying to buy {quantity})")
+                return TradeDecision(
+                    approved=False,
+                    reason=f"Cannot buy more than short position (short {existing_position.quantity}, trying to buy {quantity})"
+                )
+            logger.info(f"BUY order for {symbol}: Closing existing SHORT position (buy to cover {quantity} shares)")
+
+        # Check 7: Handle SELL orders (existing position or short sell)
         if side.lower() == "sell":
-            if existing_position:
-                # Selling existing position (closing long)
+            if existing_position and existing_side == "long":
+                # Selling existing LONG position (closing long)
                 if existing_position.quantity < quantity:
                     logger.warning(f"TRADE BLOCKED [{symbol}]: Insufficient shares (have {existing_position.quantity}, trying to sell {quantity})")
                     return TradeDecision(
                         approved=False,
                         reason=f"Insufficient shares (have {existing_position.quantity}, trying to sell {quantity})"
                     )
-                logger.info(f"SELL order for {symbol}: Closing existing long position ({existing_position.quantity} shares)")
+                logger.info(f"SELL order for {symbol}: Closing existing LONG position ({existing_position.quantity} shares)")
+            elif existing_position and existing_side == "short":
+                # Adding to existing SHORT position
+                logger.info(f"SELL order for {symbol}: Adding to existing SHORT position ({quantity} shares)")
             else:
-                # No position - this would be a short sell
+                # No position - this would be a new short sell
                 if not self.limits.enable_short_selling:
                     logger.warning(f"TRADE BLOCKED [{symbol}]: Short selling disabled. No position found for {symbol}")
                     return TradeDecision(
@@ -184,7 +234,7 @@ class RiskManager:
                         reason=f"Short selling disabled. No position found for {symbol}"
                     )
                 # Short selling is enabled
-                logger.info(f"SELL order for {symbol}: Opening short position ({quantity} shares)")
+                logger.info(f"SELL order for {symbol}: Opening new SHORT position ({quantity} shares)")
                 warnings.append("⚠️  SHORT SELL - Selling stock you don't own")
 
         # All checks passed
@@ -243,6 +293,83 @@ class RiskManager:
         except Exception as e:
             logger.error(f"Error calculating position size: {e}")
             return 0, f"Error: {str(e)}"
+
+    def calculate_dynamic_position_size(
+        self,
+        symbol: str,
+        price: float,
+        base_quantity: float
+    ) -> Tuple[float, float, str]:
+        """
+        Calculate position size using dynamic allocation based on remaining exposure budget.
+
+        This ensures each new position gets a fair share of remaining exposure capacity,
+        preventing early trades from consuming all available budget.
+
+        Args:
+            symbol: Stock symbol
+            price: Current/estimated price per share
+            base_quantity: Initially calculated quantity (before dynamic limits)
+
+        Returns:
+            Tuple of (final_quantity, position_value, explanation)
+        """
+        try:
+            account = self.broker.get_account_info()
+            positions = self.broker.get_positions()
+
+            # Calculate current exposure
+            current_exposure = float(account["portfolio_value"]) - float(account["cash"])
+
+            # Calculate remaining budget and slots
+            remaining_exposure = max(0, self.limits.max_total_exposure - current_exposure)
+            current_position_count = len(positions)
+            remaining_slots = max(1, self.limits.max_open_positions - current_position_count)
+
+            # Calculate the limits
+            base_value = base_quantity * price
+
+            # Limit 1: Hard dollar cap per position
+            max_position_cap = self.limits.max_position_size
+
+            # Limit 2: Percentage of max exposure cap (e.g., 25% of $50k = $12.5k)
+            percent_cap = self.limits.max_total_exposure * (self.limits.max_position_exposure_percent / 100)
+
+            # Limit 3: Fair share of remaining exposure (dynamic allocation)
+            fair_share = remaining_exposure / remaining_slots
+
+            # Take the minimum of all limits
+            max_allowed_value = min(base_value, max_position_cap, percent_cap, fair_share)
+
+            # Calculate final quantity
+            final_quantity = max(0, int(max_allowed_value / price))
+            final_value = final_quantity * price
+
+            # Build explanation
+            limiting_factor = "base calculation"
+            if max_allowed_value == max_position_cap and max_position_cap < base_value:
+                limiting_factor = f"max position size (${max_position_cap:,.0f})"
+            elif max_allowed_value == percent_cap and percent_cap < base_value:
+                limiting_factor = f"max {self.limits.max_position_exposure_percent:.0f}% exposure per position (${percent_cap:,.0f})"
+            elif max_allowed_value == fair_share and fair_share < base_value:
+                limiting_factor = f"fair share allocation (${fair_share:,.0f} for {remaining_slots} remaining slots)"
+
+            explanation = (
+                f"Position sized by {limiting_factor}. "
+                f"Remaining exposure: ${remaining_exposure:,.0f}, "
+                f"Open slots: {remaining_slots}/{self.limits.max_open_positions}"
+            )
+
+            logger.info(f"Dynamic position size for {symbol}: {final_quantity} shares @ ${price:.2f} = ${final_value:,.2f}")
+            logger.info(f"  Limits - Base: ${base_value:,.0f}, Max: ${max_position_cap:,.0f}, "
+                       f"Percent cap: ${percent_cap:,.0f}, Fair share: ${fair_share:,.0f}")
+
+            return final_quantity, final_value, explanation
+
+        except Exception as e:
+            logger.error(f"Error calculating dynamic position size: {e}")
+            # Fall back to base quantity if something goes wrong
+            return base_quantity, base_quantity * price, f"Error in dynamic calc, using base: {str(e)}"
 
     def update_daily_pnl(self, pnl: float):
         """

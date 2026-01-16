@@ -6,7 +6,10 @@ import {
   ChartBarIcon,
   KeyIcon,
   CheckCircleIcon,
-  ExclamationCircleIcon
+  ExclamationCircleIcon,
+  ExclamationTriangleIcon,
+  ArrowPathIcon,
+  ClockIcon
 } from '@heroicons/react/24/outline';
 import apiClient from '../utils/api';
 import { formatCurrency } from '../utils/formatters';
@@ -15,6 +18,7 @@ const Settings = () => {
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [initializing, setInitializing] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [formData, setFormData] = useState({});
@@ -52,13 +56,47 @@ const Settings = () => {
 
       await apiClient.updateSettings(formData);
 
-      setSuccessMessage('Settings saved successfully! Changes will take effect on next bot restart.');
+      // Refresh settings to get updated config status
+      const updatedSettings = await apiClient.getSettings();
+      setSettings(updatedSettings);
+      setFormData(updatedSettings);
+
+      if (updatedSettings.configured && !updatedSettings.initialized) {
+        setSuccessMessage('Settings saved! Click "Initialize System" to apply changes.');
+      } else {
+        setSuccessMessage('Settings saved successfully!');
+      }
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (err) {
       console.error('Error saving settings:', err);
       setError(err.response?.data?.detail || 'Failed to save settings');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleInitialize = async () => {
+    try {
+      setInitializing(true);
+      setError(null);
+      setSuccessMessage(null);
+
+      const result = await apiClient.initializeSystem();
+
+      if (result.initialized) {
+        setSuccessMessage('Trading system initialized successfully! You can now start the bot.');
+        // Refresh settings to update status
+        const updatedSettings = await apiClient.getSettings();
+        setSettings(updatedSettings);
+        setFormData(updatedSettings);
+      } else {
+        setError(result.message || 'Failed to initialize');
+      }
+    } catch (err) {
+      console.error('Error initializing system:', err);
+      setError(err.response?.data?.detail || 'Failed to initialize trading system');
+    } finally {
+      setInitializing(false);
     }
   };
 
@@ -86,6 +124,72 @@ const Settings = () => {
             Configure your trading bot parameters and API credentials
           </p>
         </div>
+
+        {/* Configuration Status Banner */}
+        {settings && !settings.configured && (
+          <div className="mb-6 bg-yellow-900/20 border border-yellow-700 rounded-lg p-4">
+            <div className="flex items-start">
+              <ExclamationTriangleIcon className="h-6 w-6 text-yellow-400 mr-3 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-yellow-400 font-semibold">Configuration Required</h3>
+                <p className="text-yellow-300/80 text-sm mt-1">
+                  Please configure the following to enable trading:
+                </p>
+                <ul className="text-yellow-300/80 text-sm mt-2 list-disc list-inside">
+                  {settings.missing?.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* System Ready but Not Initialized */}
+        {settings && settings.configured && !settings.initialized && (
+          <div className="mb-6 bg-blue-900/20 border border-blue-700 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-start">
+                <ArrowPathIcon className="h-6 w-6 text-blue-400 mr-3 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="text-blue-400 font-semibold">Ready to Initialize</h3>
+                  <p className="text-blue-300/80 text-sm mt-1">
+                    API keys are configured. Initialize the system to start trading.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleInitialize}
+                disabled={initializing}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center"
+              >
+                {initializing ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Initializing...
+                  </>
+                ) : (
+                  'Initialize System'
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* System Initialized */}
+        {settings && settings.configured && settings.initialized && (
+          <div className="mb-6 bg-green-900/20 border border-green-700 rounded-lg p-4">
+            <div className="flex items-center">
+              <CheckCircleIcon className="h-6 w-6 text-green-400 mr-3" />
+              <div>
+                <h3 className="text-green-400 font-semibold">System Ready</h3>
+                <p className="text-green-300/80 text-sm">
+                  Trading system is initialized and ready. You can start the bot from the Dashboard.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Success Message */}
         {successMessage && (
@@ -174,6 +278,38 @@ const Settings = () => {
                 placeholder="Enter your Finnhub API key"
                 className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
               />
+              <div className="mt-3 flex items-center justify-between">
+                <div>
+                  <span className="text-sm text-slate-300">Enable Finnhub Sentiment</span>
+                  <p className="text-xs text-slate-500">Use Finnhub for market and stock sentiment analysis (requires API key)</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleInputChange('enable_finnhub', !formData.enable_finnhub)}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    formData.enable_finnhub ? 'bg-blue-600' : 'bg-slate-600'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      formData.enable_finnhub ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Google API Key (Optional)
+              </label>
+              <input
+                type="password"
+                value={formData.google_api_key || ''}
+                onChange={(e) => handleInputChange('google_api_key', e.target.value)}
+                placeholder="Enter your Google API key"
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              />
             </div>
 
             <div>
@@ -255,6 +391,24 @@ const Settings = () => {
 
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
+                Max Position Exposure (%)
+              </label>
+              <input
+                type="number"
+                step="1"
+                min="1"
+                max="100"
+                value={formData.max_position_exposure_percent || 25}
+                onChange={(e) => handleInputChange('max_position_exposure_percent', parseFloat(e.target.value))}
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Current: {settings?.max_position_exposure_percent || 25}% of max exposure per position
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
                 Stop Loss Percentage (%)
               </label>
               <input
@@ -307,6 +461,71 @@ const Settings = () => {
               </span>
             </label>
           </div>
+
+          <div className="mt-4 p-3 bg-slate-700/50 rounded-lg">
+            <p className="text-xs text-slate-400">
+              <strong className="text-slate-300">Dynamic Position Sizing:</strong> Each new position is limited by the minimum of:
+              (1) Max Position Size, (2) Max Position Exposure % of total exposure limit, and (3) fair share of remaining exposure budget divided by remaining position slots.
+              This ensures room is left for other trades.
+            </p>
+          </div>
+        </div>
+
+        {/* Bot Scheduling Section */}
+        <div className="bg-slate-800 rounded-lg p-6 shadow-lg border border-slate-700 mb-6">
+          <div className="flex items-center mb-4">
+            <ClockIcon className="h-6 w-6 text-purple-400 mr-2" />
+            <h2 className="text-xl font-semibold text-white">Bot Scheduling</h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Scan Interval (minutes)
+              </label>
+              <select
+                value={formData.scan_interval_minutes || 5}
+                onChange={(e) => handleInputChange('scan_interval_minutes', parseInt(e.target.value))}
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+              >
+                <option value={1}>Every 1 minute</option>
+                <option value={2}>Every 2 minutes</option>
+                <option value={5}>Every 5 minutes</option>
+                <option value={10}>Every 10 minutes</option>
+                <option value={15}>Every 15 minutes</option>
+                <option value={30}>Every 30 minutes</option>
+                <option value={60}>Every 1 hour</option>
+              </select>
+              <p className="text-xs text-slate-500 mt-1">
+                Current: Every {settings?.scan_interval_minutes || 5} minutes
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Minimum Confidence Threshold (%)
+              </label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="5"
+                value={formData.min_confidence_threshold || 70}
+                onChange={(e) => handleInputChange('min_confidence_threshold', parseFloat(e.target.value))}
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Current: {settings?.min_confidence_threshold || 70}% - Only act on signals with higher confidence
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 p-3 bg-slate-700/50 rounded-lg">
+            <p className="text-xs text-slate-400">
+              <strong className="text-slate-300">How it works:</strong> The bot scans your watchlist at the specified interval during market hours.
+              Only trading signals with confidence above the threshold will be considered. Lower intervals mean more frequent scans but higher API usage.
+            </p>
+          </div>
         </div>
 
         {/* Watchlist Section */}
@@ -358,11 +577,15 @@ const Settings = () => {
           </button>
         </div>
 
-        {/* Warning */}
-        <div className="mt-6 bg-yellow-900/20 border border-yellow-900 rounded-lg p-4">
-          <p className="text-yellow-400 text-sm">
-            <strong>Note:</strong> API credentials and some settings changes require restarting the bot to take effect.
-            Stop the bot before making changes and restart it after saving.
+        {/* Helpful Info */}
+        <div className="mt-6 bg-slate-800/50 border border-slate-700 rounded-lg p-4">
+          <p className="text-slate-400 text-sm">
+            <strong className="text-slate-300">Getting Started:</strong> Enter your API keys above and click Save, then Initialize System.
+            After initialization, you can start the trading bot from the Dashboard.
+          </p>
+          <p className="text-slate-500 text-xs mt-2">
+            Get your Alpaca API keys at <a href="https://alpaca.markets" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">alpaca.markets</a> and
+            your Anthropic API key at <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">console.anthropic.com</a>
           </p>
         </div>
       </div>

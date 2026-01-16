@@ -2,9 +2,15 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+// Default timeout for most operations
+const DEFAULT_TIMEOUT = 30000; // 30 seconds
+
+// Longer timeout for LLM operations (bot start, initialization)
+const LLM_TIMEOUT = 120000; // 2 minutes
+
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: DEFAULT_TIMEOUT,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -15,6 +21,18 @@ export const apiClient = {
   // Health check
   health: async () => {
     const response = await api.get('/api/health');
+    return response.data;
+  },
+
+  // Get configuration status
+  getConfigStatus: async () => {
+    const response = await api.get('/api/config/status');
+    return response.data;
+  },
+
+  // Initialize trading system after config changes (may involve LLM validation)
+  initializeSystem: async () => {
+    const response = await api.post('/api/config/initialize', {}, { timeout: LLM_TIMEOUT });
     return response.data;
   },
 
@@ -42,15 +60,39 @@ export const apiClient = {
     return response.data;
   },
 
-  // Start bot
+  // Start bot (involves LLM for trading analysis)
   startBot: async () => {
-    const response = await api.post('/api/bot/start');
+    const response = await api.post('/api/bot/start', {}, { timeout: LLM_TIMEOUT });
     return response.data;
   },
 
   // Stop bot
   stopBot: async () => {
     const response = await api.post('/api/bot/stop');
+    return response.data;
+  },
+
+  // Get pending trades awaiting approval
+  getPendingTrades: async () => {
+    const response = await api.get('/api/pending-trades');
+    return response.data;
+  },
+
+  // Approve a pending trade
+  approveTrade: async (tradeId) => {
+    const response = await api.post(`/api/pending-trades/${tradeId}/approve`, {}, { timeout: LLM_TIMEOUT });
+    return response.data;
+  },
+
+  // Reject a pending trade
+  rejectTrade: async (tradeId) => {
+    const response = await api.post(`/api/pending-trades/${tradeId}/reject`);
+    return response.data;
+  },
+
+  // Clear all pending trades
+  clearPendingTrades: async () => {
+    const response = await api.post('/api/pending-trades/clear');
     return response.data;
   },
 };

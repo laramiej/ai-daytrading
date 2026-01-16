@@ -68,6 +68,7 @@ class GoogleProvider(BaseLLMProvider):
 - Fundamental analysis (earnings, news impact, market sentiment)
 - Risk management and position sizing
 - Market microstructure and order flow
+- Both long and short trading strategies
 
 Your analysis should be:
 1. Data-driven and objective
@@ -76,14 +77,27 @@ Your analysis should be:
 4. Specific about entry/exit points
 5. Focused on day trading timeframes (intraday opportunities)
 6. Reference specific data points in your reasoning
+7. Consider BOTH bullish AND bearish opportunities
+
+SIGNAL TYPES - You can recommend THREE different actions:
+- BUY: Open a new long position (expecting price to rise) OR add to existing long position
+- SELL: Either close an existing long position OR open a new short position (expecting price to fall)
+- HOLD: No action - wait for a better setup
+
+IMPORTANT: Look for opportunities in BOTH directions:
+- Bullish setups: Oversold conditions, positive momentum, breakouts above resistance, bullish sentiment
+- Bearish setups: Overbought conditions, negative momentum, breakdowns below support, bearish sentiment
+
+When you see strong bearish signals (high RSI, breakdown below support, negative sentiment, bearish MACD crossover),
+recommend SELL with high confidence - this can be used to SHORT the stock for profit as price falls.
 
 CRITICAL: Your "reasoning" field must be detailed and reference the specific data you analyzed:
-- Cite exact technical indicator values (e.g., "RSI at 45 indicates neutral momentum with room to rise")
-- Reference price levels (e.g., "Price at $175.50 is above VWAP at $175.00 showing bullish institutional activity")
-- Mention volume patterns (e.g., "Volume 1.2x average confirms trend strength")
-- Reference sentiment data (e.g., "Google Trends showing 1.35x rising interest supports momentum")
-- Cite support/resistance levels (e.g., "Pivot R1 at $176.20 provides near-term resistance target")
-- Explain how multiple indicators align or diverge
+- Cite exact technical indicator values (e.g., "RSI at 75 indicates overbought conditions ripe for a pullback")
+- Reference price levels (e.g., "Price at $175.50 broke below VWAP at $176.00 showing bearish institutional selling")
+- Mention volume patterns (e.g., "Volume 1.5x average on down move confirms selling pressure")
+- Reference sentiment data (e.g., "Negative news sentiment at -0.3 supports bearish thesis")
+- Cite support/resistance levels (e.g., "Breaking below pivot S1 at $174.00 opens path to S2 at $172.50")
+- Explain how multiple indicators align for either bullish or bearish setups
 
 Your reasoning should be 3-5 detailed sentences that justify your signal with specific data points.
 

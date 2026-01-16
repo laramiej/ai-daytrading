@@ -98,12 +98,48 @@ class TradingStrategy:
 
                 context_parts.append("\n" + portfolio_info)
 
+                # Check current position status
+                has_position = self.portfolio_context.has_position(symbol)
+                position_details = self.portfolio_context.get_position_details(symbol) if has_position else None
+                short_selling_enabled = self.portfolio_context.risk_manager.limits.enable_short_selling
+
+                # Add clear position status
+                context_parts.append("\n📍 CURRENT POSITION STATUS:")
+                if position_details:
+                    pnl_str = f"+${position_details['pnl']:.2f}" if position_details['pnl'] >= 0 else f"-${abs(position_details['pnl']):.2f}"
+                    pnl_pct = position_details['pnl_percent']
+                    position_side = position_details.get('side', 'long').upper()
+
+                    if position_side == "LONG":
+                        # We have a LONG position
+                        context_parts.append(f"  📈 LONG POSITION: {position_details['quantity']} shares of {symbol}")
+                        context_parts.append(f"     Entry: ${position_details['entry_price']:.2f} | Current: ${position_details['current_price']:.2f}")
+                        context_parts.append(f"     P&L: {pnl_str} ({pnl_pct:+.2f}%)")
+                        context_parts.append(f"  → BUY signal: ADD to existing long position (increase position)")
+                        context_parts.append(f"  → SELL signal: CLOSE this long position (sell all {position_details['quantity']} shares)")
+                    else:
+                        # We have a SHORT position
+                        context_parts.append(f"  📉 SHORT POSITION: {position_details['quantity']} shares of {symbol}")
+                        context_parts.append(f"     Entry: ${position_details['entry_price']:.2f} | Current: ${position_details['current_price']:.2f}")
+                        context_parts.append(f"     P&L: {pnl_str} ({pnl_pct:+.2f}%) - Profit when price goes DOWN")
+                        context_parts.append(f"  → BUY signal: CLOSE this short position (buy to cover {position_details['quantity']} shares)")
+                        context_parts.append(f"  → SELL signal: ADD to existing short position (increase short exposure)")
+                else:
+                    context_parts.append(f"  ❌ NO POSITION in {symbol}")
+                    context_parts.append(f"  → BUY signal: OPEN a new LONG position (profit from price increase)")
+                    if short_selling_enabled:
+                        context_parts.append(f"  → SELL signal: OPEN a new SHORT position (profit from price decline)")
+                    else:
+                        context_parts.append(f"  → SELL signal: REJECTED (short selling disabled, no position to close)")
+
+                # Add trading capabilities
+                context_parts.append("\n📊 TRADING CAPABILITIES:")
+                context_parts.append(f"  Short Selling: {'ENABLED' if short_selling_enabled else 'DISABLED'}")
+
                 if recommendations:
-                    context_parts.append("\nTrading Recommendations:")
+                    context_parts.append("\n📋 Trading Recommendations:")
                     if not recommendations["can_buy"]:
                         context_parts.append("  ⚠️  Cannot open new BUY positions")
-                    if recommendations["can_sell"]:
-                        context_parts.append("  ℹ️  Can SELL existing position")
                     for reason in recommendations["reasons"]:
                         context_parts.append(f"  - {reason}")
                     for consideration in recommendations["considerations"]:

@@ -166,6 +166,12 @@ const PositionsTable = ({ positions, settings, account }) => {
               <th className="px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
                 P&L %
               </th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
+                Stop Loss
+              </th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
+                Take Profit
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700">
@@ -199,6 +205,20 @@ const PositionsTable = ({ positions, settings, account }) => {
                   <span className={`px-2 py-1 text-xs font-semibold rounded ${getPnlBgColor(position.pnl_percent)} ${getPnlColor(position.pnl_percent)}`}>
                     {formatPercent(position.pnl_percent)}
                   </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                  {position.stop_loss ? (
+                    <span className="text-red-400">{formatCurrency(position.stop_loss)}</span>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                  {position.take_profit ? (
+                    <span className="text-green-400">{formatCurrency(position.take_profit)}</span>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
                 </td>
               </tr>
             ))}

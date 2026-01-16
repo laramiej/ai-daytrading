@@ -67,7 +67,8 @@ class DayTradingBot:
                 stop_loss_percentage=self.settings.stop_loss_percentage,
                 take_profit_percentage=self.settings.take_profit_percentage,
                 max_open_positions=self.settings.max_open_positions,
-                enable_short_selling=self.settings.enable_short_selling
+                enable_short_selling=self.settings.enable_short_selling,
+                max_position_exposure_percent=self.settings.max_position_exposure_percent
             )
         )
 
@@ -251,32 +252,116 @@ class DayTradingBot:
             quote = self.broker.get_latest_quote(signal.symbol)
             current_price = (quote["bid_price"] + quote["ask_price"]) / 2
 
-            # Check if this is a SELL signal for an existing position (closing a long)
+            # Check for existing position (needed for both BUY and SELL)
             side = "buy" if signal.signal == "BUY" else "sell"
-            existing_position = None
-            if side == "sell":
-                positions = self.broker.get_positions()
-                existing_position = next((p for p in positions if p.symbol == signal.symbol), None)
+            positions = self.broker.get_positions()
+            existing_position = next((p for p in positions if p.symbol == signal.symbol), None)
 
-            # Determine quantity
-            if side == "sell" and existing_position:
-                # Closing an existing long position - use the actual position quantity
-                quantity = existing_position.quantity
-                logger.info(f"Closing existing position: {quantity} shares of {signal.symbol}")
-            elif signal.entry_price and signal.stop_loss:
-                quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+            # Get position side if we have a position (handle both string and enum)
+            position_side = None
+            if existing_position:
+                raw_side = existing_position.side
+                # Handle enum values (e.g., PositionSide.SHORT) vs string values
+                if hasattr(raw_side, 'value'):
+                    position_side = raw_side.value.lower()
+                else:
+                    position_side = str(raw_side).lower()
+                logger.info(f"Existing position for {signal.symbol}: side={position_side}, quantity={existing_position.quantity}")
+
+            # Determine quantity based on signal type and existing position
+            if side == "sell" and existing_position and position_side == "long":
+                # SELL with existing LONG position: close the entire long position
+                # This REDUCES exposure - we're liquidating an asset, not opening a new position
+                quantity = abs(existing_position.quantity)  # Ensure positive quantity for order
+                logger.info(f"📉 SELL+LONG BRANCH: Closing LONG position for {signal.symbol}")
+                logger.info(f"   Selling {quantity} shares (reduces exposure, skipping dynamic sizing)")
+            elif side == "sell" and existing_position and position_side == "short":
+                # SELL with existing SHORT position: add to short (increase short exposure)
+                logger.info(f"📉 Adding to existing SHORT position for {signal.symbol}")
+                if signal.entry_price and signal.stop_loss:
+                    base_quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                        symbol=signal.symbol,
+                        entry_price=signal.entry_price,
+                        stop_loss_price=signal.stop_loss
+                    )
+                else:
+                    base_quantity = self.settings.max_position_size / current_price
+                    base_quantity = round(base_quantity, 0)
+                quantity, position_value, dynamic_explanation = self.risk_manager.calculate_dynamic_position_size(
                     symbol=signal.symbol,
-                    entry_price=signal.entry_price,
-                    stop_loss_price=signal.stop_loss
+                    price=current_price,
+                    base_quantity=base_quantity
                 )
-                logger.info(f"Position sizing: {quantity} shares ({sizing_explanation})")
+                logger.info(f"Additional short size: {quantity} shares ({dynamic_explanation})")
+            elif side == "sell" and not existing_position:
+                # SELL with no position: this is a new short sale
+                logger.info(f"📉 SHORT SELL signal for {signal.symbol} - opening new short position")
+                if not self.settings.enable_short_selling:
+                    logger.warning(f"⚠️ BLOCKED: Short selling is DISABLED in settings - cannot short {signal.symbol}")
+                    return False
+                # Calculate short position size with dynamic sizing
+                if signal.entry_price and signal.stop_loss:
+                    base_quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                        symbol=signal.symbol,
+                        entry_price=signal.entry_price,
+                        stop_loss_price=signal.stop_loss
+                    )
+                else:
+                    base_quantity = self.settings.max_position_size / current_price
+                    base_quantity = round(base_quantity, 0)
+                # Apply dynamic position sizing limits
+                quantity, position_value, dynamic_explanation = self.risk_manager.calculate_dynamic_position_size(
+                    symbol=signal.symbol,
+                    price=current_price,
+                    base_quantity=base_quantity
+                )
+                logger.info(f"Short position size: {quantity} shares ({dynamic_explanation})")
+            elif side == "buy" and existing_position and position_side == "short":
+                # BUY with existing SHORT position: close the short (buy to cover)
+                # This REDUCES exposure - we're closing a liability, not opening a new position
+                quantity = abs(existing_position.quantity)  # Ensure positive quantity for order
+                logger.info(f"📈 BUY+SHORT BRANCH: Closing SHORT position for {signal.symbol}")
+                logger.info(f"   Buying to cover {quantity} shares (reduces exposure, skipping dynamic sizing)")
+            elif side == "buy" and existing_position and position_side == "long":
+                # BUY with existing LONG position: add to long (increase long exposure)
+                logger.info(f"📈 Adding to existing LONG position for {signal.symbol}")
+                if signal.entry_price and signal.stop_loss:
+                    base_quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                        symbol=signal.symbol,
+                        entry_price=signal.entry_price,
+                        stop_loss_price=signal.stop_loss
+                    )
+                else:
+                    base_quantity = self.settings.max_position_size / current_price
+                    base_quantity = round(base_quantity, 0)
+                quantity, position_value, dynamic_explanation = self.risk_manager.calculate_dynamic_position_size(
+                    symbol=signal.symbol,
+                    price=current_price,
+                    base_quantity=base_quantity
+                )
+                logger.info(f"Additional long size: {quantity} shares ({dynamic_explanation})")
             else:
-                # Default quantity based on max position size
-                quantity = self.settings.max_position_size / current_price
-                quantity = round(quantity, 0)
+                # BUY with no position: open new long position
+                logger.info(f"📈 BUY signal for {signal.symbol} - opening new long position")
+                if signal.entry_price and signal.stop_loss:
+                    base_quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                        symbol=signal.symbol,
+                        entry_price=signal.entry_price,
+                        stop_loss_price=signal.stop_loss
+                    )
+                else:
+                    base_quantity = self.settings.max_position_size / current_price
+                    base_quantity = round(base_quantity, 0)
+                # Apply dynamic position sizing limits
+                quantity, position_value, dynamic_explanation = self.risk_manager.calculate_dynamic_position_size(
+                    symbol=signal.symbol,
+                    price=current_price,
+                    base_quantity=base_quantity
+                )
+                logger.info(f"Buy position size: {quantity} shares ({dynamic_explanation})")
 
-            if quantity == 0:
-                logger.warning("Calculated quantity is 0 - skipping trade")
+            if quantity <= 0:
+                logger.warning(f"Calculated quantity is 0 or less for {signal.symbol} - insufficient exposure budget")
                 return False
 
             # Evaluate risk
@@ -342,14 +427,57 @@ class DayTradingBot:
                     logger.info("Trade cancelled during quantity approval")
                     return False
 
+            # Determine stop-loss and take-profit prices
+            # Use AI-provided prices if available, otherwise calculate from settings
+            stop_loss_price = None
+            take_profit_price = None
+
+            # Only set protective orders for NEW positions (not for closing positions)
+            is_closing_position = (
+                (side == "buy" and position_side == "short") or
+                (side == "sell" and position_side == "long")
+            )
+
+            if not is_closing_position:
+                # Use AI-provided prices first
+                if signal.stop_loss:
+                    stop_loss_price = signal.stop_loss
+                elif self.settings.stop_loss_percentage > 0:
+                    # Calculate from settings percentage
+                    if side == "buy":
+                        stop_loss_price = round(current_price * (1 - self.settings.stop_loss_percentage / 100), 2)
+                    else:  # short position
+                        stop_loss_price = round(current_price * (1 + self.settings.stop_loss_percentage / 100), 2)
+
+                if signal.take_profit:
+                    take_profit_price = signal.take_profit
+                elif self.settings.take_profit_percentage > 0:
+                    # Calculate from settings percentage
+                    if side == "buy":
+                        take_profit_price = round(current_price * (1 + self.settings.take_profit_percentage / 100), 2)
+                    else:  # short position
+                        take_profit_price = round(current_price * (1 - self.settings.take_profit_percentage / 100), 2)
+
             # Execute trade
             logger.info(f"Executing: {side.upper()} {final_quantity} {signal.symbol}")
 
-            order = self.broker.place_market_order(
-                symbol=signal.symbol,
-                quantity=final_quantity,
-                side=side
-            )
+            # Place order (bracket if protective orders, simple market otherwise)
+            if stop_loss_price or take_profit_price:
+                order = self.broker.place_bracket_order(
+                    symbol=signal.symbol,
+                    quantity=final_quantity,
+                    side=side,
+                    take_profit_price=take_profit_price,
+                    stop_loss_price=stop_loss_price
+                )
+                order_type = "BRACKET"
+            else:
+                order = self.broker.place_market_order(
+                    symbol=signal.symbol,
+                    quantity=final_quantity,
+                    side=side
+                )
+                order_type = "MARKET"
 
             # Record trade in risk manager
             self.risk_manager.record_trade(
@@ -369,9 +497,14 @@ class DayTradingBot:
                 llm_provider=signal.llm_provider
             )
 
-            print(f"\n✅ Order placed successfully!")
+            print(f"\n✅ {order_type} order placed successfully!")
             print(f"   Order ID: {order.order_id}")
-            print(f"   Status: {order.status}\n")
+            print(f"   Status: {order.status}")
+            if stop_loss_price:
+                print(f"   Stop Loss: ${stop_loss_price:.2f}")
+            if take_profit_price:
+                print(f"   Take Profit: ${take_profit_price:.2f}")
+            print()
 
             return True
 

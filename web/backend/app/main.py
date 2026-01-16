@@ -169,7 +169,8 @@ class TradingState:
                 stop_loss_percentage=self.settings.stop_loss_percentage,
                 take_profit_percentage=self.settings.take_profit_percentage,
                 max_open_positions=self.settings.max_open_positions,
-                enable_short_selling=self.settings.enable_short_selling
+                enable_short_selling=self.settings.enable_short_selling,
+                max_position_exposure_percent=self.settings.max_position_exposure_percent
             )
         )
 
@@ -261,44 +262,116 @@ class TradingState:
                     existing_position = next((p for p in positions if p.symbol == signal.symbol), None)
 
                     # Determine quantity based on signal type and existing position
-                    if side == "sell" and existing_position:
-                        # SELL with existing long position: close the entire position
-                        quantity = existing_position.quantity
-                        logger.info(f"Closing existing position: {quantity} shares of {signal.symbol}")
+                    # Get position side if we have a position (handle both string and enum)
+                    position_side = None
+                    if existing_position:
+                        raw_side = existing_position.side
+                        # Handle enum values (e.g., PositionSide.SHORT) vs string values
+                        if hasattr(raw_side, 'value'):
+                            position_side = raw_side.value.lower()
+                        else:
+                            position_side = str(raw_side).lower()
+                        logger.info(f"Existing position for {signal.symbol}: side={position_side}, quantity={existing_position.quantity}")
+
+                    if side == "sell" and existing_position and position_side == "long":
+                        # SELL with existing LONG position: close the entire long position
+                        # This REDUCES exposure - we're liquidating an asset, not opening a new position
+                        quantity = abs(existing_position.quantity)  # Ensure positive quantity for order
+                        logger.info(f"📉 SELL+LONG BRANCH: Closing LONG position for {signal.symbol}")
+                        logger.info(f"   Selling {quantity} shares (reduces exposure, skipping dynamic sizing)")
+                    elif side == "sell" and existing_position and position_side == "short":
+                        # SELL with existing SHORT position: add to short (increase short exposure)
+                        logger.info(f"📉 Adding to existing SHORT position for {signal.symbol}")
+                        if signal.entry_price and signal.stop_loss:
+                            base_quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                                symbol=signal.symbol,
+                                entry_price=signal.entry_price,
+                                stop_loss_price=signal.stop_loss
+                            )
+                        else:
+                            base_quantity = self.settings.max_position_size / current_price
+                            base_quantity = round(base_quantity, 0)
+                        quantity, position_value, dynamic_explanation = self.risk_manager.calculate_dynamic_position_size(
+                            symbol=signal.symbol,
+                            price=current_price,
+                            base_quantity=base_quantity
+                        )
+                        logger.info(f"Additional short size: {quantity} shares ({dynamic_explanation})")
                     elif side == "sell" and not existing_position:
-                        # SELL with no position: this is a short sale
-                        logger.info(f"📉 SHORT SELL signal for {signal.symbol} - no existing position to close")
+                        # SELL with no position: this is a new short sale
+                        logger.info(f"📉 SHORT SELL signal for {signal.symbol} - opening new short position")
                         if not self.risk_manager.limits.enable_short_selling:
                             reason = f"Short selling is DISABLED in settings - cannot short {signal.symbol}"
                             logger.warning(f"⚠️ BLOCKED: {reason}")
                             return False, reason
-                        # Calculate short position size
+                        # Calculate short position size with dynamic sizing
                         if signal.entry_price and signal.stop_loss:
-                            quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                            base_quantity, sizing_explanation = self.risk_manager.calculate_position_size(
                                 symbol=signal.symbol,
                                 entry_price=signal.entry_price,
                                 stop_loss_price=signal.stop_loss
                             )
-                            logger.info(f"Short position size: {quantity} shares ({sizing_explanation})")
                         else:
-                            quantity = self.settings.max_position_size / current_price
-                            quantity = round(quantity, 0)
-                            logger.info(f"Short position size: {quantity} shares (based on max position size)")
+                            base_quantity = self.settings.max_position_size / current_price
+                            base_quantity = round(base_quantity, 0)
+                        # Apply dynamic position sizing limits
+                        quantity, position_value, dynamic_explanation = self.risk_manager.calculate_dynamic_position_size(
+                            symbol=signal.symbol,
+                            price=current_price,
+                            base_quantity=base_quantity
+                        )
+                        logger.info(f"Short position size: {quantity} shares ({dynamic_explanation})")
+                    elif side == "buy" and existing_position and position_side == "short":
+                        # BUY with existing SHORT position: close the short (buy to cover)
+                        # This REDUCES exposure - we're closing a liability, not opening a new position
+                        quantity = abs(existing_position.quantity)  # Ensure positive quantity for order
+                        logger.info(f"📈 BUY+SHORT BRANCH: Closing SHORT position for {signal.symbol}")
+                        logger.info(f"   Buying to cover {quantity} shares (reduces exposure, skipping dynamic sizing)")
+                    elif side == "buy" and existing_position and position_side == "long":
+                        # BUY with existing LONG position: add to long (increase long exposure)
+                        logger.info(f"📈 Adding to existing LONG position for {signal.symbol}")
+                        if signal.entry_price and signal.stop_loss:
+                            base_quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                                symbol=signal.symbol,
+                                entry_price=signal.entry_price,
+                                stop_loss_price=signal.stop_loss
+                            )
+                        else:
+                            base_quantity = self.settings.max_position_size / current_price
+                            base_quantity = round(base_quantity, 0)
+                        quantity, position_value, dynamic_explanation = self.risk_manager.calculate_dynamic_position_size(
+                            symbol=signal.symbol,
+                            price=current_price,
+                            base_quantity=base_quantity
+                        )
+                        logger.info(f"Additional long size: {quantity} shares ({dynamic_explanation})")
                     else:
-                        # BUY order: calculate new position size
+                        # BUY with no position: open new long position
+                        # Debug: log what we're seeing
+                        logger.info(f"📈 ELSE BRANCH for {signal.symbol}: side={side}, existing_position={existing_position is not None}, position_side={position_side}")
+                        if existing_position and position_side not in ["long", "short"]:
+                            logger.warning(f"⚠️ UNEXPECTED position_side value: '{position_side}' (type: {type(position_side)})")
+                        logger.info(f"📈 BUY signal for {signal.symbol} - opening new long position")
                         if signal.entry_price and signal.stop_loss:
-                            quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                            base_quantity, sizing_explanation = self.risk_manager.calculate_position_size(
                                 symbol=signal.symbol,
                                 entry_price=signal.entry_price,
                                 stop_loss_price=signal.stop_loss
                             )
                         else:
-                            quantity = self.settings.max_position_size / current_price
-                            quantity = round(quantity, 0)
+                            base_quantity = self.settings.max_position_size / current_price
+                            base_quantity = round(base_quantity, 0)
+                        # Apply dynamic position sizing limits
+                        quantity, position_value, dynamic_explanation = self.risk_manager.calculate_dynamic_position_size(
+                            symbol=signal.symbol,
+                            price=current_price,
+                            base_quantity=base_quantity
+                        )
+                        logger.info(f"Buy position size: {quantity} shares ({dynamic_explanation})")
 
-                    if quantity == 0:
-                        reason = "Calculated quantity is 0 - cannot execute trade"
-                        logger.warning(reason)
+                    if quantity <= 0:
+                        reason = "Insufficient exposure budget remaining - position would be 0 shares"
+                        logger.warning(f"TRADE BLOCKED [{signal.symbol}]: {reason}")
                         return False, reason
 
                     # Evaluate risk
@@ -316,12 +389,64 @@ class TradingState:
 
                     final_quantity = risk_decision.recommended_quantity or quantity
 
-                    # Place order
-                    order = self.broker.place_market_order(
-                        symbol=signal.symbol,
-                        quantity=final_quantity,
-                        side=side
+                    # Final safety check - ensure we're not trying to place a 0-quantity order
+                    if final_quantity <= 0:
+                        reason = "Final quantity is 0 or negative - cannot execute trade"
+                        logger.warning(f"TRADE BLOCKED [{signal.symbol}]: {reason}")
+                        return False, reason
+
+                    # Determine stop-loss and take-profit prices
+                    # Use AI-provided prices if available, otherwise calculate from settings
+                    stop_loss_price = None
+                    take_profit_price = None
+
+                    # Only set protective orders for NEW positions (not for closing positions)
+                    is_closing_position = (
+                        (side == "buy" and position_side == "short") or
+                        (side == "sell" and position_side == "long")
                     )
+
+                    if not is_closing_position:
+                        # Use AI-provided prices first
+                        if signal.stop_loss:
+                            stop_loss_price = signal.stop_loss
+                        elif self.settings.stop_loss_percentage > 0:
+                            # Calculate from settings percentage
+                            if side == "buy":
+                                stop_loss_price = round(current_price * (1 - self.settings.stop_loss_percentage / 100), 2)
+                            else:  # short position
+                                stop_loss_price = round(current_price * (1 + self.settings.stop_loss_percentage / 100), 2)
+
+                        if signal.take_profit:
+                            take_profit_price = signal.take_profit
+                        elif self.settings.take_profit_percentage > 0:
+                            # Calculate from settings percentage
+                            if side == "buy":
+                                take_profit_price = round(current_price * (1 + self.settings.take_profit_percentage / 100), 2)
+                            else:  # short position
+                                take_profit_price = round(current_price * (1 - self.settings.take_profit_percentage / 100), 2)
+
+                    # Place order (bracket if protective orders, simple market otherwise)
+                    if stop_loss_price or take_profit_price:
+                        order = self.broker.place_bracket_order(
+                            symbol=signal.symbol,
+                            quantity=final_quantity,
+                            side=side,
+                            take_profit_price=take_profit_price,
+                            stop_loss_price=stop_loss_price
+                        )
+                        order_desc = f"BRACKET {side.upper()} {final_quantity} shares @ ${current_price:.2f}"
+                        if stop_loss_price:
+                            order_desc += f" | SL: ${stop_loss_price:.2f}"
+                        if take_profit_price:
+                            order_desc += f" | TP: ${take_profit_price:.2f}"
+                    else:
+                        order = self.broker.place_market_order(
+                            symbol=signal.symbol,
+                            quantity=final_quantity,
+                            side=side
+                        )
+                        order_desc = f"{side.upper()} {final_quantity} shares @ ${current_price:.2f}"
 
                     # Record trade
                     self.portfolio.record_trade(
@@ -334,7 +459,7 @@ class TradingState:
                     )
 
                     logger.info(f"Order placed successfully! Order ID: {order.order_id}")
-                    return True, f"Order placed: {side.upper()} {final_quantity} shares @ ${current_price:.2f}"
+                    return True, f"Order placed: {order_desc}"
 
                 except Exception as e:
                     reason = f"Error executing signal: {str(e)}"
@@ -516,7 +641,7 @@ async def get_status():
 # Get positions
 @app.get("/api/positions")
 async def get_positions():
-    """Get all current positions"""
+    """Get all current positions with associated open orders (stop-loss/take-profit)"""
     if state.broker is None:
         return {
             "positions": [],
@@ -526,6 +651,22 @@ async def get_positions():
 
     try:
         positions = state.broker.get_positions()
+        open_orders = state.broker.get_open_orders()
+
+        # Build a map of open orders by symbol for quick lookup
+        # Stop-loss orders (type 'stop' or 'stop_limit') and limit orders (take-profit)
+        orders_by_symbol = {}
+        for order in open_orders:
+            if order.symbol not in orders_by_symbol:
+                orders_by_symbol[order.symbol] = {"stop_loss": None, "take_profit": None}
+
+            # Stop orders are stop-loss
+            if order.order_type in ["stop", "stop_limit"] and order.stop_price:
+                orders_by_symbol[order.symbol]["stop_loss"] = order.stop_price
+            # Limit orders on opposite side are take-profit
+            elif order.order_type == "limit" and order.limit_price:
+                orders_by_symbol[order.symbol]["take_profit"] = order.limit_price
+
         return {
             "positions": [
                 {
@@ -535,7 +676,9 @@ async def get_positions():
                     "entry_price": pos.entry_price,
                     "current_price": pos.current_price,
                     "pnl": pos.pnl,
-                    "pnl_percent": pos.pnl_percent
+                    "pnl_percent": pos.pnl_percent,
+                    "stop_loss": orders_by_symbol.get(pos.symbol, {}).get("stop_loss"),
+                    "take_profit": orders_by_symbol.get(pos.symbol, {}).get("take_profit")
                 }
                 for pos in positions
             ],
@@ -570,6 +713,7 @@ async def get_settings():
         "take_profit_percentage": state.settings.take_profit_percentage,
         "max_open_positions": state.settings.max_open_positions,
         "enable_short_selling": state.settings.enable_short_selling,
+        "max_position_exposure_percent": state.settings.max_position_exposure_percent,
         "enable_auto_trading": state.settings.enable_auto_trading,
         "enable_finnhub": state.settings.enable_finnhub,
         "default_llm_provider": state.settings.default_llm_provider,
@@ -621,6 +765,7 @@ async def update_settings(updated_settings: dict):
                     'take_profit_percentage': 'TAKE_PROFIT_PERCENTAGE',
                     'max_open_positions': 'MAX_OPEN_POSITIONS',
                     'enable_short_selling': 'ENABLE_SHORT_SELLING',
+                    'max_position_exposure_percent': 'MAX_POSITION_EXPOSURE_PERCENT',
                     'enable_auto_trading': 'ENABLE_AUTO_TRADING',
                     'enable_finnhub': 'ENABLE_FINNHUB',
                     'default_llm_provider': 'DEFAULT_LLM_PROVIDER',
@@ -670,6 +815,7 @@ async def update_settings(updated_settings: dict):
             'take_profit_percentage': 'TAKE_PROFIT_PERCENTAGE',
             'max_open_positions': 'MAX_OPEN_POSITIONS',
             'enable_short_selling': 'ENABLE_SHORT_SELLING',
+            'max_position_exposure_percent': 'MAX_POSITION_EXPOSURE_PERCENT',
             'enable_auto_trading': 'ENABLE_AUTO_TRADING',
             'enable_finnhub': 'ENABLE_FINNHUB',
             'default_llm_provider': 'DEFAULT_LLM_PROVIDER',
@@ -872,33 +1018,35 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
                     actionable_signals.sort(key=lambda x: x.confidence, reverse=True)
 
                     if state.settings.enable_auto_trading:
-                        # Auto-execute highest confidence signal
-                        top_signal = actionable_signals[0]
-                        logger.info(f"Auto-trading enabled - executing top signal: {top_signal.signal} {top_signal.symbol} ({top_signal.confidence}%)")
-                        success, reason = state.trading_bot.execute_signal(top_signal)
+                        # Auto-execute ALL actionable signals in order of confidence
+                        logger.info(f"Auto-trading enabled - attempting to execute {len(actionable_signals)} signals")
 
-                        if success:
-                            await manager.broadcast({
-                                "type": "trade_executed",
-                                "success": True,
-                                "symbol": top_signal.symbol,
-                                "signal": top_signal.signal,
-                                "confidence": top_signal.confidence,
-                                "message": reason,
-                                "timestamp": datetime.now().isoformat()
-                            })
-                        else:
-                            # Trade blocked by risk manager - broadcast with detailed reason
-                            await manager.broadcast({
-                                "type": "trade_blocked",
-                                "success": False,
-                                "symbol": top_signal.symbol,
-                                "signal": top_signal.signal,
-                                "confidence": top_signal.confidence,
-                                "message": f"Trade blocked for {top_signal.symbol}",
-                                "reason": reason,
-                                "timestamp": datetime.now().isoformat()
-                            })
+                        for signal in actionable_signals:
+                            logger.info(f"Attempting: {signal.signal} {signal.symbol} ({signal.confidence}%)")
+                            success, reason = state.trading_bot.execute_signal(signal)
+
+                            if success:
+                                await manager.broadcast({
+                                    "type": "trade_executed",
+                                    "success": True,
+                                    "symbol": signal.symbol,
+                                    "signal": signal.signal,
+                                    "confidence": signal.confidence,
+                                    "message": reason,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                            else:
+                                # Trade blocked by risk manager - broadcast with detailed reason
+                                await manager.broadcast({
+                                    "type": "trade_blocked",
+                                    "success": False,
+                                    "symbol": signal.symbol,
+                                    "signal": signal.signal,
+                                    "confidence": signal.confidence,
+                                    "message": f"Trade blocked for {signal.symbol}",
+                                    "reason": reason,
+                                    "timestamp": datetime.now().isoformat()
+                                })
                     else:
                         # Add to pending trades for approval
                         logger.info(f"Auto-trading disabled - adding {len(actionable_signals)} signals to pending trades")
