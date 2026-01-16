@@ -77,6 +77,7 @@ class RiskManager:
 
         # Check 1: Daily loss limit
         if self.daily_pnl <= -self.limits.max_daily_loss:
+            logger.warning(f"TRADE BLOCKED [{symbol}]: Daily loss limit reached (${-self.daily_pnl:.2f} / ${self.limits.max_daily_loss:.2f})")
             return TradeDecision(
                 approved=False,
                 reason=f"Daily loss limit reached (${-self.daily_pnl:.2f} / ${self.limits.max_daily_loss:.2f})"
@@ -90,7 +91,7 @@ class RiskManager:
                 f"Trade value ${trade_value:.2f} exceeds position limit "
                 f"${self.limits.max_position_size:.2f}"
             )
-
+            logger.warning(f"TRADE BLOCKED [{symbol}]: Position size ${trade_value:.2f} exceeds limit ${self.limits.max_position_size:.2f}")
             return TradeDecision(
                 approved=False,
                 reason="Position size exceeds limit",
@@ -98,20 +99,26 @@ class RiskManager:
                 warnings=warnings
             )
 
-        # Check 3: Maximum open positions (for buy orders)
-        if side.lower() == "buy":
-            try:
-                positions = self.broker.get_positions()
-                if len(positions) >= self.limits.max_open_positions:
-                    return TradeDecision(
-                        approved=False,
-                        reason=f"Maximum open positions reached ({len(positions)} / {self.limits.max_open_positions})"
-                    )
-            except Exception as e:
-                logger.error(f"Error checking positions: {e}")
+        # Fetch positions once for multiple checks
+        try:
+            positions = self.broker.get_positions()
+            existing_position = next((p for p in positions if p.symbol == symbol), None)
+        except Exception as e:
+            logger.error(f"Error fetching positions: {e}")
+            return TradeDecision(
+                approved=False,
+                reason="Unable to verify open positions"
+            )
+
+        # Check 3: Maximum open positions (for buy orders and new short positions)
+        # For buys or new short positions (not closing existing), check position limit
+        is_new_position = side.lower() == "buy" or (side.lower() == "sell" and not existing_position)
+        if is_new_position:
+            if len(positions) >= self.limits.max_open_positions:
+                logger.warning(f"TRADE BLOCKED [{symbol}]: Maximum open positions reached ({len(positions)} / {self.limits.max_open_positions})")
                 return TradeDecision(
                     approved=False,
-                    reason="Unable to verify open positions"
+                    reason=f"Maximum open positions reached ({len(positions)} / {self.limits.max_open_positions})"
                 )
 
         # Check 4: Total exposure limit
@@ -125,6 +132,7 @@ class RiskManager:
                 new_exposure = current_exposure - trade_value
 
             if new_exposure > self.limits.max_total_exposure:
+                logger.warning(f"TRADE BLOCKED [{symbol}]: Total exposure would exceed limit (${new_exposure:.2f} / ${self.limits.max_total_exposure:.2f})")
                 return TradeDecision(
                     approved=False,
                     reason=f"Total exposure would exceed limit (${new_exposure:.2f} / ${self.limits.max_total_exposure:.2f})"
@@ -134,16 +142,20 @@ class RiskManager:
             logger.error(f"Error checking exposure: {e}")
             warnings.append("Unable to verify total exposure")
 
-        # Check 5: Buying power (for buy orders)
-        if side.lower() == "buy":
+        # Check 5: Buying power (for buy orders and new short positions)
+        # Short selling also requires margin/buying power
+        if is_new_position:
             try:
                 account = self.broker.get_account_info()
                 buying_power = float(account["buying_power"])
 
                 if trade_value > buying_power:
+                    is_short = side.lower() == "sell"
+                    action_type = "short sell" if is_short else "buy"
+                    logger.warning(f"TRADE BLOCKED [{symbol}]: Insufficient buying power for {action_type} (${buying_power:.2f} available, ${trade_value:.2f} needed)")
                     return TradeDecision(
                         approved=False,
-                        reason=f"Insufficient buying power (${buying_power:.2f} available, ${trade_value:.2f} needed)"
+                        reason=f"Insufficient buying power for {action_type} (${buying_power:.2f} available, ${trade_value:.2f} needed)"
                     )
             except Exception as e:
                 logger.error(f"Error checking buying power: {e}")
@@ -154,35 +166,26 @@ class RiskManager:
 
         # Check 6: Handle SELL orders (existing position or short sell)
         if side.lower() == "sell":
-            try:
-                positions = self.broker.get_positions()
-                position = next((p for p in positions if p.symbol == symbol), None)
-
-                if position:
-                    # Selling existing position (closing long)
-                    if position.quantity < quantity:
-                        return TradeDecision(
-                            approved=False,
-                            reason=f"Insufficient shares (have {position.quantity}, trying to sell {quantity})"
-                        )
-                    logger.info(f"SELL order for {symbol}: Closing existing long position")
-                else:
-                    # No position - this would be a short sell
-                    if not self.limits.enable_short_selling:
-                        return TradeDecision(
-                            approved=False,
-                            reason=f"Short selling disabled. No position found for {symbol}"
-                        )
-                    # Short selling is enabled
-                    logger.info(f"SELL order for {symbol}: Opening short position")
-                    warnings.append("⚠️  SHORT SELL - Selling stock you don't own")
-
-            except Exception as e:
-                logger.error(f"Error checking position: {e}")
-                return TradeDecision(
-                    approved=False,
-                    reason="Unable to verify position"
-                )
+            if existing_position:
+                # Selling existing position (closing long)
+                if existing_position.quantity < quantity:
+                    logger.warning(f"TRADE BLOCKED [{symbol}]: Insufficient shares (have {existing_position.quantity}, trying to sell {quantity})")
+                    return TradeDecision(
+                        approved=False,
+                        reason=f"Insufficient shares (have {existing_position.quantity}, trying to sell {quantity})"
+                    )
+                logger.info(f"SELL order for {symbol}: Closing existing long position ({existing_position.quantity} shares)")
+            else:
+                # No position - this would be a short sell
+                if not self.limits.enable_short_selling:
+                    logger.warning(f"TRADE BLOCKED [{symbol}]: Short selling disabled. No position found for {symbol}")
+                    return TradeDecision(
+                        approved=False,
+                        reason=f"Short selling disabled. No position found for {symbol}"
+                    )
+                # Short selling is enabled
+                logger.info(f"SELL order for {symbol}: Opening short position ({quantity} shares)")
+                warnings.append("⚠️  SHORT SELL - Selling stock you don't own")
 
         # All checks passed
         return TradeDecision(

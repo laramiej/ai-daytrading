@@ -251,8 +251,19 @@ class DayTradingBot:
             quote = self.broker.get_latest_quote(signal.symbol)
             current_price = (quote["bid_price"] + quote["ask_price"]) / 2
 
+            # Check if this is a SELL signal for an existing position (closing a long)
+            side = "buy" if signal.signal == "BUY" else "sell"
+            existing_position = None
+            if side == "sell":
+                positions = self.broker.get_positions()
+                existing_position = next((p for p in positions if p.symbol == signal.symbol), None)
+
             # Determine quantity
-            if signal.entry_price and signal.stop_loss:
+            if side == "sell" and existing_position:
+                # Closing an existing long position - use the actual position quantity
+                quantity = existing_position.quantity
+                logger.info(f"Closing existing position: {quantity} shares of {signal.symbol}")
+            elif signal.entry_price and signal.stop_loss:
                 quantity, sizing_explanation = self.risk_manager.calculate_position_size(
                     symbol=signal.symbol,
                     entry_price=signal.entry_price,
@@ -269,7 +280,6 @@ class DayTradingBot:
                 return False
 
             # Evaluate risk
-            side = "buy" if signal.signal == "BUY" else "sell"
             risk_decision = self.risk_manager.evaluate_trade(
                 symbol=signal.symbol,
                 side=side,
@@ -503,6 +513,7 @@ class DayTradingBot:
         print("\n🔄 Executing trades...")
         successful = 0
         failed = 0
+        results = []  # Track results for summary
 
         for i, signal in enumerate(signals, 1):
             print(f"\n[{i}/{len(signals)}] Processing {signal.symbol}...")
@@ -511,12 +522,15 @@ class DayTradingBot:
                 success = self.execute_signal(signal)
                 if success:
                     successful += 1
+                    results.append((signal.symbol, signal.signal, "✅ Executed"))
                 else:
                     failed += 1
+                    results.append((signal.symbol, signal.signal, "❌ Blocked by risk manager"))
 
             except Exception as e:
                 logger.error(f"Error executing {signal.symbol}: {e}")
                 failed += 1
+                results.append((signal.symbol, signal.signal, f"❌ Error: {str(e)[:30]}"))
 
             # Small delay between trades
             if i < len(signals):
@@ -529,6 +543,9 @@ class DayTradingBot:
         print(f"✅ Successful: {successful}")
         print(f"❌ Failed: {failed}")
         print(f"📈 Total: {len(signals)}")
+        print("\n📋 RESULTS BY SYMBOL:")
+        for symbol, action, status in results:
+            print(f"  {symbol} ({action}): {status}")
         print("=" * 70)
 
     def _review_signals(self, signals: List):

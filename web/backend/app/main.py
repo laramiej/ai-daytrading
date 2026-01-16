@@ -60,24 +60,81 @@ class TradingState:
         self.broker = None
         self.trading_bot = None
         self.websocket_clients: List[WebSocket] = []
+        self.initialized = False  # Track if trading components are ready
+        self.pending_trades: Dict[str, dict] = {}  # trade_id -> signal data for approval
+        self._trade_counter = 0  # For generating unique trade IDs
+
+    def add_pending_trade(self, signal) -> str:
+        """Add a signal to pending trades for approval"""
+        self._trade_counter += 1
+        trade_id = f"trade_{self._trade_counter}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        self.pending_trades[trade_id] = {
+            "trade_id": trade_id,
+            "symbol": signal.symbol,
+            "signal": signal.signal,
+            "confidence": signal.confidence,
+            "reasoning": signal.reasoning,
+            "entry_price": signal.entry_price,
+            "stop_loss": signal.stop_loss,
+            "take_profit": signal.take_profit,
+            "position_size": signal.position_size_recommendation,
+            "risk_factors": signal.risk_factors,
+            "time_horizon": signal.time_horizon,
+            "llm_provider": signal.llm_provider,
+            "timestamp": datetime.now().isoformat(),
+            "status": "pending"
+        }
+        # Store the actual signal object for execution
+        self.pending_trades[trade_id]["_signal_obj"] = signal
+        return trade_id
+
+    def get_pending_trade(self, trade_id: str) -> Optional[dict]:
+        """Get a pending trade by ID"""
+        return self.pending_trades.get(trade_id)
+
+    def remove_pending_trade(self, trade_id: str):
+        """Remove a pending trade"""
+        if trade_id in self.pending_trades:
+            del self.pending_trades[trade_id]
+
+    def get_all_pending_trades(self) -> List[dict]:
+        """Get all pending trades (without internal signal objects)"""
+        trades = []
+        for trade_id, trade in self.pending_trades.items():
+            trade_copy = {k: v for k, v in trade.items() if not k.startswith('_')}
+            trades.append(trade_copy)
+        return trades
 
     async def initialize(self):
-        """Initialize trading system components"""
+        """Initialize settings - broker and bot are initialized lazily when keys are configured"""
         try:
             self.settings = load_settings()
-            self.broker = AlpacaBroker(
-                api_key=self.settings.alpaca_api_key,
-                secret_key=self.settings.alpaca_secret_key,
-                paper_trading=self.settings.alpaca_paper_trading
-            )
+            logger.info("Settings loaded successfully")
 
-            # Initialize the full trading bot components
-            self._initialize_trading_bot()
+            # Check if we can initialize the full trading system
+            is_configured, missing = self.settings.is_fully_configured()
+            if is_configured:
+                self._initialize_broker()
+                self._initialize_trading_bot()
+                self.initialized = True
+                logger.info("Trading system fully initialized")
+            else:
+                logger.info(f"Trading system not fully configured. Missing: {', '.join(missing)}")
+                logger.info("Configure API keys in Settings to enable trading")
 
-            logger.info("Trading system initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize: {e}")
-            raise
+            logger.error(f"Failed to load settings: {e}")
+            # Still allow the app to start so user can configure via UI
+            self.settings = load_settings()
+
+    def _initialize_broker(self):
+        """Initialize the Alpaca broker"""
+        self.broker = AlpacaBroker(
+            api_key=self.settings.alpaca_api_key,
+            secret_key=self.settings.alpaca_secret_key,
+            paper_trading=self.settings.alpaca_paper_trading
+        )
+        logger.info("Alpaca broker initialized")
 
     def _initialize_trading_bot(self):
         """Initialize the trading bot with all components"""
@@ -152,31 +209,99 @@ class TradingState:
 
                 return signals
 
+            def analyze_symbol(self, symbol):
+                """Analyze a single symbol and return the signal (even HOLD)"""
+                try:
+                    signal = self.strategy.analyze_symbol(symbol)
+                    return signal
+                except Exception as e:
+                    logger.error(f"Error analyzing {symbol}: {e}")
+                    return None
+
+            def get_market_sentiment(self):
+                """Get overall market sentiment"""
+                try:
+                    if self.strategy.market_analyzer.sentiment_analyzer:
+                        return self.strategy.market_analyzer._get_cached_market_sentiment()
+                    return None
+                except Exception as e:
+                    logger.error(f"Error getting market sentiment: {e}")
+                    return None
+
+            def get_stock_sentiment(self, symbol):
+                """Get sentiment for a specific stock"""
+                try:
+                    if self.strategy.market_analyzer.sentiment_analyzer:
+                        return self.strategy.market_analyzer.sentiment_analyzer.get_stock_sentiment(symbol)
+                    return None
+                except Exception as e:
+                    logger.error(f"Error getting stock sentiment for {symbol}: {e}")
+                    return None
+
+            def get_watchlist(self):
+                """Get the watchlist"""
+                return self.settings.get_watchlist()
+
             def execute_signal(self, signal):
-                """Execute a trading signal"""
+                """
+                Execute a trading signal
+
+                Returns:
+                    Tuple of (success: bool, reason: str)
+                """
                 logger.info(f"Processing signal: {signal.signal} {signal.symbol}")
 
                 try:
                     quote = self.broker.get_latest_quote(signal.symbol)
                     current_price = (quote["bid_price"] + quote["ask_price"]) / 2
+                    side = "buy" if signal.signal == "BUY" else "sell"
 
-                    # Calculate position size
-                    if signal.entry_price and signal.stop_loss:
-                        quantity, sizing_explanation = self.risk_manager.calculate_position_size(
-                            symbol=signal.symbol,
-                            entry_price=signal.entry_price,
-                            stop_loss_price=signal.stop_loss
-                        )
+                    # Check if we have an existing position
+                    positions = self.broker.get_positions()
+                    existing_position = next((p for p in positions if p.symbol == signal.symbol), None)
+
+                    # Determine quantity based on signal type and existing position
+                    if side == "sell" and existing_position:
+                        # SELL with existing long position: close the entire position
+                        quantity = existing_position.quantity
+                        logger.info(f"Closing existing position: {quantity} shares of {signal.symbol}")
+                    elif side == "sell" and not existing_position:
+                        # SELL with no position: this is a short sale
+                        logger.info(f"📉 SHORT SELL signal for {signal.symbol} - no existing position to close")
+                        if not self.risk_manager.limits.enable_short_selling:
+                            reason = f"Short selling is DISABLED in settings - cannot short {signal.symbol}"
+                            logger.warning(f"⚠️ BLOCKED: {reason}")
+                            return False, reason
+                        # Calculate short position size
+                        if signal.entry_price and signal.stop_loss:
+                            quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                                symbol=signal.symbol,
+                                entry_price=signal.entry_price,
+                                stop_loss_price=signal.stop_loss
+                            )
+                            logger.info(f"Short position size: {quantity} shares ({sizing_explanation})")
+                        else:
+                            quantity = self.settings.max_position_size / current_price
+                            quantity = round(quantity, 0)
+                            logger.info(f"Short position size: {quantity} shares (based on max position size)")
                     else:
-                        quantity = self.settings.max_position_size / current_price
-                        quantity = round(quantity, 0)
+                        # BUY order: calculate new position size
+                        if signal.entry_price and signal.stop_loss:
+                            quantity, sizing_explanation = self.risk_manager.calculate_position_size(
+                                symbol=signal.symbol,
+                                entry_price=signal.entry_price,
+                                stop_loss_price=signal.stop_loss
+                            )
+                        else:
+                            quantity = self.settings.max_position_size / current_price
+                            quantity = round(quantity, 0)
 
                     if quantity == 0:
-                        logger.warning("Calculated quantity is 0 - skipping trade")
-                        return False
+                        reason = "Calculated quantity is 0 - cannot execute trade"
+                        logger.warning(reason)
+                        return False, reason
 
                     # Evaluate risk
-                    side = "buy" if signal.signal == "BUY" else "sell"
                     risk_decision = self.risk_manager.evaluate_trade(
                         symbol=signal.symbol,
                         side=side,
@@ -185,8 +310,9 @@ class TradingState:
                     )
 
                     if not risk_decision.approved:
-                        logger.warning(f"Trade blocked by risk manager: {risk_decision.reason}")
-                        return False
+                        reason = f"Risk manager: {risk_decision.reason}"
+                        logger.warning(f"Trade blocked - {reason}")
+                        return False, reason
 
                     final_quantity = risk_decision.recommended_quantity or quantity
 
@@ -208,11 +334,12 @@ class TradingState:
                     )
 
                     logger.info(f"Order placed successfully! Order ID: {order.order_id}")
-                    return True
+                    return True, f"Order placed: {side.upper()} {final_quantity} shares @ ${current_price:.2f}"
 
                 except Exception as e:
-                    logger.error(f"Error executing signal: {e}")
-                    return False
+                    reason = f"Error executing signal: {str(e)}"
+                    logger.error(reason)
+                    return False, reason
 
         self.trading_bot = SimpleTradingBot(self.broker, strategy, risk_manager, self.settings)
 
@@ -271,18 +398,97 @@ async def shutdown_event():
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
+    is_configured, missing = state.settings.is_fully_configured() if state.settings else (False, ["Settings not loaded"])
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "bot_running": state.bot_running
+        "bot_running": state.bot_running,
+        "configured": is_configured,
+        "initialized": state.initialized
     }
+
+# Configuration status endpoint
+@app.get("/api/config/status")
+async def get_config_status():
+    """Check if the system is fully configured and ready to run"""
+    if state.settings is None:
+        return {
+            "configured": False,
+            "initialized": False,
+            "missing": ["Settings not loaded"],
+            "message": "Please refresh the page"
+        }
+
+    is_configured, missing = state.settings.is_fully_configured()
+
+    return {
+        "configured": is_configured,
+        "initialized": state.initialized,
+        "missing": missing,
+        "message": "Ready to start trading" if is_configured else f"Please configure: {', '.join(missing)}"
+    }
+
+# Initialize/reinitialize trading system after config changes
+@app.post("/api/config/initialize")
+async def initialize_trading_system():
+    """Initialize or reinitialize the trading system after configuration changes"""
+    if state.settings is None:
+        raise HTTPException(status_code=500, detail="Settings not loaded")
+
+    # Reload settings from .env
+    state.settings = load_settings(reload_env=True)
+
+    is_configured, missing = state.settings.is_fully_configured()
+
+    if not is_configured:
+        return {
+            "status": "not_configured",
+            "initialized": False,
+            "missing": missing,
+            "message": f"Cannot initialize: {', '.join(missing)}"
+        }
+
+    try:
+        # Stop the bot if running
+        if state.bot_running:
+            state.bot_running = False
+            if state.bot_task and not state.bot_task.done():
+                state.bot_task.cancel()
+
+        # Reinitialize broker and trading bot
+        state._initialize_broker()
+        state._initialize_trading_bot()
+        state.initialized = True
+
+        logger.info("Trading system reinitialized successfully")
+
+        return {
+            "status": "success",
+            "initialized": True,
+            "missing": [],
+            "message": "Trading system initialized successfully"
+        }
+    except Exception as e:
+        logger.error(f"Failed to initialize trading system: {e}")
+        state.initialized = False
+        raise HTTPException(status_code=500, detail=f"Initialization failed: {str(e)}")
 
 # Get trading status
 @app.get("/api/status")
 async def get_status():
     """Get current trading system status"""
-    if state.broker is None:
-        raise HTTPException(status_code=503, detail="Trading system not initialized. Check your .env file for valid Alpaca API keys.")
+    # Return limited status if not fully configured
+    if not state.initialized or state.broker is None:
+        is_configured, missing = state.settings.is_fully_configured() if state.settings else (False, ["Settings not loaded"])
+        return {
+            "bot_running": False,
+            "configured": is_configured,
+            "initialized": False,
+            "missing": missing,
+            "account": None,
+            "positions_count": 0,
+            "timestamp": datetime.now().isoformat()
+        }
 
     try:
         account = state.broker.get_account_info()
@@ -290,6 +496,8 @@ async def get_status():
 
         return {
             "bot_running": state.bot_running,
+            "configured": True,
+            "initialized": state.initialized,
             "account": {
                 "equity": account["equity"],
                 "cash": account["cash"],
@@ -310,7 +518,11 @@ async def get_status():
 async def get_positions():
     """Get all current positions"""
     if state.broker is None:
-        raise HTTPException(status_code=503, detail="Trading system not initialized. Check your .env file for valid Alpaca API keys.")
+        return {
+            "positions": [],
+            "configured": False,
+            "timestamp": datetime.now().isoformat()
+        }
 
     try:
         positions = state.broker.get_positions()
@@ -333,11 +545,24 @@ async def get_positions():
         logger.error(f"Error getting positions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+def _mask_api_key(key: Optional[str]) -> str:
+    """Mask an API key for display, showing only last 4 characters"""
+    if not key or key.startswith("your_"):
+        return ""  # Not configured
+    if len(key) <= 4:
+        return "***"
+    return "***" + key[-4:]
+
 # Get settings
 @app.get("/api/settings")
 async def get_settings():
     """Get current trading settings"""
+    is_configured, missing = state.settings.is_fully_configured() if state.settings else (False, [])
+
     return {
+        "configured": is_configured,
+        "initialized": state.initialized,
+        "missing": missing,
         "max_position_size": state.settings.max_position_size,
         "max_daily_loss": state.settings.max_daily_loss,
         "max_total_exposure": state.settings.max_total_exposure,
@@ -346,14 +571,19 @@ async def get_settings():
         "max_open_positions": state.settings.max_open_positions,
         "enable_short_selling": state.settings.enable_short_selling,
         "enable_auto_trading": state.settings.enable_auto_trading,
+        "enable_finnhub": state.settings.enable_finnhub,
         "default_llm_provider": state.settings.default_llm_provider,
         "watchlist": state.settings.get_watchlist(),
-        # Include API keys (masked for security)
-        "alpaca_api_key": "***" + state.settings.alpaca_api_key[-4:] if state.settings.alpaca_api_key else "",
-        "alpaca_secret_key": "***" + state.settings.alpaca_secret_key[-4:] if state.settings.alpaca_secret_key else "",
-        "anthropic_api_key": "***" + state.settings.anthropic_api_key[-4:] if state.settings.anthropic_api_key else "",
-        "openai_api_key": "***" + state.settings.openai_api_key[-4:] if state.settings.openai_api_key else "",
-        "finnhub_api_key": "***" + state.settings.finnhub_api_key[-4:] if state.settings.finnhub_api_key else "",
+        # Bot scheduling
+        "scan_interval_minutes": state.settings.scan_interval_minutes,
+        "min_confidence_threshold": state.settings.min_confidence_threshold,
+        # Include API keys (masked for security, empty string means not configured)
+        "alpaca_api_key": _mask_api_key(state.settings.alpaca_api_key),
+        "alpaca_secret_key": _mask_api_key(state.settings.alpaca_secret_key),
+        "anthropic_api_key": _mask_api_key(state.settings.anthropic_api_key),
+        "openai_api_key": _mask_api_key(state.settings.openai_api_key),
+        "finnhub_api_key": _mask_api_key(state.settings.finnhub_api_key),
+        "google_api_key": _mask_api_key(state.settings.google_api_key),
     }
 
 # Update settings
@@ -392,12 +622,16 @@ async def update_settings(updated_settings: dict):
                     'max_open_positions': 'MAX_OPEN_POSITIONS',
                     'enable_short_selling': 'ENABLE_SHORT_SELLING',
                     'enable_auto_trading': 'ENABLE_AUTO_TRADING',
+                    'enable_finnhub': 'ENABLE_FINNHUB',
                     'default_llm_provider': 'DEFAULT_LLM_PROVIDER',
+                    'scan_interval_minutes': 'SCAN_INTERVAL_MINUTES',
+                    'min_confidence_threshold': 'MIN_CONFIDENCE_THRESHOLD',
                     'alpaca_api_key': 'ALPACA_API_KEY',
                     'alpaca_secret_key': 'ALPACA_SECRET_KEY',
                     'anthropic_api_key': 'ANTHROPIC_API_KEY',
                     'openai_api_key': 'OPENAI_API_KEY',
                     'finnhub_api_key': 'FINNHUB_API_KEY',
+                    'google_api_key': 'GOOGLE_API_KEY',
                     'watchlist': 'WATCHLIST',
                 }
 
@@ -427,19 +661,64 @@ async def update_settings(updated_settings: dict):
             else:
                 updated_lines.append(line)
 
+        # Add any new keys that weren't found in the file (e.g., commented out or missing)
+        env_key_map = {
+            'max_position_size': 'MAX_POSITION_SIZE',
+            'max_daily_loss': 'MAX_DAILY_LOSS',
+            'max_total_exposure': 'MAX_TOTAL_EXPOSURE',
+            'stop_loss_percentage': 'STOP_LOSS_PERCENTAGE',
+            'take_profit_percentage': 'TAKE_PROFIT_PERCENTAGE',
+            'max_open_positions': 'MAX_OPEN_POSITIONS',
+            'enable_short_selling': 'ENABLE_SHORT_SELLING',
+            'enable_auto_trading': 'ENABLE_AUTO_TRADING',
+            'enable_finnhub': 'ENABLE_FINNHUB',
+            'default_llm_provider': 'DEFAULT_LLM_PROVIDER',
+            'scan_interval_minutes': 'SCAN_INTERVAL_MINUTES',
+            'min_confidence_threshold': 'MIN_CONFIDENCE_THRESHOLD',
+            'alpaca_api_key': 'ALPACA_API_KEY',
+            'alpaca_secret_key': 'ALPACA_SECRET_KEY',
+            'anthropic_api_key': 'ANTHROPIC_API_KEY',
+            'openai_api_key': 'OPENAI_API_KEY',
+            'finnhub_api_key': 'FINNHUB_API_KEY',
+            'watchlist': 'WATCHLIST',
+        }
+
+        for frontend_key, env_key in env_key_map.items():
+            if frontend_key in updated_settings and frontend_key not in keys_updated:
+                value = updated_settings[frontend_key]
+                # Skip masked values (unchanged API keys) or empty values
+                if isinstance(value, str) and (value.startswith('***') or value == ''):
+                    continue
+                # Format value appropriately
+                if isinstance(value, bool):
+                    formatted_value = str(value).lower()
+                elif isinstance(value, list):
+                    formatted_value = ','.join(value)
+                else:
+                    formatted_value = str(value)
+                # Add the new key
+                updated_lines.append(f"{env_key}={formatted_value}\n")
+                keys_updated.add(frontend_key)
+                logger.info(f"Added new key to .env: {env_key}")
+
         # Write updated .env file
         with open(env_path, 'w') as f:
             f.writelines(updated_lines)
 
         logger.info(f"Settings updated: {', '.join(keys_updated)}")
 
-        # Reload settings (note: bot needs restart for full effect)
-        state.settings = load_settings()
+        # Reload settings from .env file (note: bot needs restart for full effect)
+        state.settings = load_settings(reload_env=True)
+
+        # Check if system is now fully configured
+        is_configured, missing = state.settings.is_fully_configured()
 
         return {
             "status": "success",
             "message": "Settings saved successfully. Restart the bot for changes to take full effect.",
-            "updated_keys": list(keys_updated)
+            "updated_keys": list(keys_updated),
+            "configured": is_configured,
+            "missing": missing
         }
 
     except Exception as e:
@@ -472,53 +751,186 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
 
             # Run a single scan
             logger.info("Running market scan...")
+            watchlist = state.trading_bot.get_watchlist()
+
+            # Get market sentiment and broadcast
+            market_sentiment = state.trading_bot.get_market_sentiment()
+            market_sentiment_data = None
+            if market_sentiment:
+                # Serialize sentiment for broadcast (datetime not JSON serializable)
+                market_sentiment_data = {
+                    "overall_score": market_sentiment.get("overall_score", 0),
+                    "summary": market_sentiment.get("summary", "Unknown"),
+                    "indicators": {}
+                }
+                for name, indicator in market_sentiment.get("indicators", {}).items():
+                    market_sentiment_data["indicators"][name] = {
+                        "score": indicator.get("score", 0),
+                        "label": indicator.get("label", "N/A"),
+                        "value": indicator.get("value"),
+                        "change": indicator.get("change")
+                    }
+
+                await manager.broadcast({
+                    "type": "market_sentiment",
+                    "sentiment": market_sentiment_data,
+                    "timestamp": datetime.now().isoformat()
+                })
+
             await manager.broadcast({
                 "type": "scan_started",
-                "message": f"Scanning {len(state.settings.get_watchlist())} symbols for opportunities",
+                "message": f"Scanning {len(watchlist)} symbols for opportunities",
+                "symbols": watchlist,
+                "market_sentiment": market_sentiment_data,
                 "timestamp": datetime.now().isoformat()
             })
 
             try:
-                # Scan for opportunities
-                signals = state.trading_bot.scan_opportunities(min_confidence)
+                # Analyze each symbol individually and broadcast results
+                all_analyses = []
+                actionable_signals = []
 
-                # Broadcast signals to WebSocket clients
-                if signals:
+                for symbol in watchlist:
+                    logger.info(f"Analyzing {symbol}...")
+
+                    # Broadcast that we're analyzing this symbol
                     await manager.broadcast({
-                        "type": "trading_signals",
-                        "count": len(signals),
-                        "signals": [
-                            {
+                        "type": "analyzing_symbol",
+                        "symbol": symbol,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                    # Analyze the symbol
+                    signal = state.trading_bot.analyze_symbol(symbol)
+
+                    if signal:
+                        # Determine if this is actionable (BUY/SELL with high confidence)
+                        is_actionable = (
+                            signal.signal != "HOLD" and
+                            signal.confidence >= min_confidence
+                        )
+
+                        # Get stock-specific sentiment
+                        stock_sentiment = state.trading_bot.get_stock_sentiment(symbol)
+                        stock_sentiment_data = None
+                        if stock_sentiment:
+                            stock_sentiment_data = {
+                                "overall_score": stock_sentiment.get("overall_score", 0),
+                                "summary": stock_sentiment.get("summary", "Unknown"),
+                                "sources": {}
+                            }
+                            for source_name, source_data in stock_sentiment.get("sources", {}).items():
+                                if source_data:
+                                    stock_sentiment_data["sources"][source_name] = {
+                                        "score": source_data.get("score", 0),
+                                        "label": source_data.get("label", "N/A")
+                                    }
+
+                        analysis_data = {
+                            "symbol": signal.symbol,
+                            "signal": signal.signal,
+                            "confidence": signal.confidence,
+                            "reasoning": signal.reasoning,
+                            "entry_price": signal.entry_price,
+                            "stop_loss": signal.stop_loss,
+                            "take_profit": signal.take_profit,
+                            "position_size": signal.position_size_recommendation,
+                            "risk_factors": signal.risk_factors,
+                            "time_horizon": signal.time_horizon,
+                            "llm_provider": signal.llm_provider,
+                            "is_actionable": is_actionable,
+                            "stock_sentiment": stock_sentiment_data,
+                            "timestamp": datetime.now().isoformat()
+                        }
+
+                        all_analyses.append(analysis_data)
+
+                        # Broadcast individual stock analysis
+                        await manager.broadcast({
+                            "type": "stock_analysis",
+                            **analysis_data
+                        })
+
+                        # Track actionable signals
+                        if is_actionable:
+                            actionable_signals.append(signal)
+                    else:
+                        # Broadcast analysis failure
+                        await manager.broadcast({
+                            "type": "stock_analysis",
+                            "symbol": symbol,
+                            "signal": "ERROR",
+                            "confidence": 0,
+                            "reasoning": "Failed to analyze symbol",
+                            "is_actionable": False,
+                            "timestamp": datetime.now().isoformat()
+                        })
+
+                # After all analyses, handle actionable signals
+                if actionable_signals:
+                    # Sort by confidence
+                    actionable_signals.sort(key=lambda x: x.confidence, reverse=True)
+
+                    if state.settings.enable_auto_trading:
+                        # Auto-execute highest confidence signal
+                        top_signal = actionable_signals[0]
+                        logger.info(f"Auto-trading enabled - executing top signal: {top_signal.signal} {top_signal.symbol} ({top_signal.confidence}%)")
+                        success, reason = state.trading_bot.execute_signal(top_signal)
+
+                        if success:
+                            await manager.broadcast({
+                                "type": "trade_executed",
+                                "success": True,
+                                "symbol": top_signal.symbol,
+                                "signal": top_signal.signal,
+                                "confidence": top_signal.confidence,
+                                "message": reason,
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        else:
+                            # Trade blocked by risk manager - broadcast with detailed reason
+                            await manager.broadcast({
+                                "type": "trade_blocked",
+                                "success": False,
+                                "symbol": top_signal.symbol,
+                                "signal": top_signal.signal,
+                                "confidence": top_signal.confidence,
+                                "message": f"Trade blocked for {top_signal.symbol}",
+                                "reason": reason,
+                                "timestamp": datetime.now().isoformat()
+                            })
+                    else:
+                        # Add to pending trades for approval
+                        logger.info(f"Auto-trading disabled - adding {len(actionable_signals)} signals to pending trades")
+                        for s in actionable_signals:
+                            trade_id = state.add_pending_trade(s)
+
+                            await manager.broadcast({
+                                "type": "trade_pending_approval",
+                                "trade_id": trade_id,
                                 "symbol": s.symbol,
                                 "signal": s.signal,
                                 "confidence": s.confidence,
-                                "reasoning": s.reasoning[:200] + "..." if len(s.reasoning) > 200 else s.reasoning
-                            }
-                            for s in signals
-                        ],
-                        "timestamp": datetime.now().isoformat()
-                    })
+                                "reasoning": s.reasoning,
+                                "entry_price": s.entry_price,
+                                "stop_loss": s.stop_loss,
+                                "take_profit": s.take_profit,
+                                "position_size": s.position_size_recommendation,
+                                "risk_factors": s.risk_factors,
+                                "time_horizon": s.time_horizon,
+                                "llm_provider": s.llm_provider,
+                                "timestamp": datetime.now().isoformat()
+                            })
 
-                    # If auto-trading is enabled, execute the highest confidence signal
-                    if state.settings.enable_auto_trading and signals:
-                        logger.info(f"Auto-trading enabled - executing top signal: {signals[0].symbol}")
-                        success = state.trading_bot.execute_signal(signals[0])
-
-                        # Broadcast trade execution result
-                        await manager.broadcast({
-                            "type": "trade_executed",
-                            "success": success,
-                            "symbol": signals[0].symbol,
-                            "signal": signals[0].signal,
-                            "timestamp": datetime.now().isoformat()
-                        })
-                else:
-                    logger.info("No trading signals found in this scan")
-                    await manager.broadcast({
-                        "type": "scan_complete",
-                        "message": "Scan complete - no high-confidence signals found",
-                        "timestamp": datetime.now().isoformat()
-                    })
+                # Broadcast scan complete summary
+                await manager.broadcast({
+                    "type": "scan_complete",
+                    "message": f"Scan complete - analyzed {len(watchlist)} symbols",
+                    "total_analyzed": len(watchlist),
+                    "actionable_count": len(actionable_signals),
+                    "analyses": all_analyses,
+                    "timestamp": datetime.now().isoformat()
+                })
 
             except Exception as e:
                 logger.error(f"Error during market scan: {e}")
@@ -545,34 +957,59 @@ async def start_bot():
     if state.bot_running:
         raise HTTPException(status_code=400, detail="Bot is already running")
 
-    if state.trading_bot is None:
-        raise HTTPException(status_code=503, detail="Trading bot not initialized")
+    # Check if system is fully configured
+    if state.settings is None:
+        raise HTTPException(status_code=503, detail="Settings not loaded")
+
+    is_configured, missing = state.settings.is_fully_configured()
+    if not is_configured:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot start bot. Please configure: {', '.join(missing)}"
+        )
+
+    # Initialize if needed
+    if not state.initialized or state.trading_bot is None:
+        try:
+            state._initialize_broker()
+            state._initialize_trading_bot()
+            state.initialized = True
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to initialize trading system: {str(e)}")
 
     try:
         state.bot_running = True
 
+        # Get scan settings from config
+        scan_interval_seconds = state.settings.scan_interval_minutes * 60
+        min_confidence = state.settings.min_confidence_threshold
+
         # Start the bot loop as a background task
         state.bot_task = asyncio.create_task(
             run_trading_bot_loop(
-                scan_interval=300,  # 5 minutes
-                min_confidence=70.0
+                scan_interval=scan_interval_seconds,
+                min_confidence=min_confidence
             )
         )
 
-        logger.info("Trading bot started via API")
+        logger.info(f"Trading bot started via API (scan every {state.settings.scan_interval_minutes} min, min confidence {min_confidence}%)")
 
         # Broadcast status update to WebSocket clients
         await manager.broadcast({
             "type": "bot_status",
             "running": True,
-            "message": "Trading bot started - scanning every 5 minutes",
+            "message": f"Trading bot started - scanning every {state.settings.scan_interval_minutes} minutes",
+            "scan_interval_minutes": state.settings.scan_interval_minutes,
+            "min_confidence_threshold": min_confidence,
             "timestamp": datetime.now().isoformat()
         })
 
         return {
             "status": "success",
-            "message": "Bot started successfully - scanning every 5 minutes",
+            "message": f"Bot started successfully - scanning every {state.settings.scan_interval_minutes} minutes",
             "bot_running": True,
+            "scan_interval_minutes": state.settings.scan_interval_minutes,
+            "min_confidence_threshold": min_confidence,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -616,6 +1053,149 @@ async def stop_bot():
     except Exception as e:
         logger.error(f"Error stopping bot: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to stop bot: {str(e)}")
+
+# Pending trades endpoints
+@app.get("/api/pending-trades")
+async def get_pending_trades():
+    """Get all pending trades awaiting approval"""
+    return {
+        "pending_trades": state.get_all_pending_trades(),
+        "count": len(state.pending_trades),
+        "auto_trading_enabled": state.settings.enable_auto_trading if state.settings else False
+    }
+
+@app.post("/api/pending-trades/{trade_id}/approve")
+async def approve_trade(trade_id: str):
+    """Approve and execute a pending trade"""
+    trade = state.get_pending_trade(trade_id)
+    if not trade:
+        raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found")
+
+    if trade.get("status") != "pending":
+        raise HTTPException(status_code=400, detail=f"Trade {trade_id} is not pending")
+
+    if not state.trading_bot:
+        raise HTTPException(status_code=503, detail="Trading bot not initialized")
+
+    try:
+        # Get the original signal object
+        signal = trade.get("_signal_obj")
+        if not signal:
+            raise HTTPException(status_code=500, detail="Signal data missing")
+
+        # Execute the trade
+        logger.info(f"User approved trade: {trade['signal']} {trade['symbol']}")
+        success, reason = state.trading_bot.execute_signal(signal)
+
+        # Remove from pending
+        state.remove_pending_trade(trade_id)
+
+        # Broadcast execution result
+        if success:
+            await manager.broadcast({
+                "type": "trade_executed",
+                "success": True,
+                "symbol": trade["symbol"],
+                "signal": trade["signal"],
+                "trade_id": trade_id,
+                "approved_by": "user",
+                "message": reason,
+                "timestamp": datetime.now().isoformat()
+            })
+        else:
+            # Trade was approved by user but blocked by risk manager
+            await manager.broadcast({
+                "type": "trade_blocked",
+                "success": False,
+                "symbol": trade["symbol"],
+                "signal": trade["signal"],
+                "trade_id": trade_id,
+                "approved_by": "user",
+                "message": f"Trade blocked for {trade['symbol']}",
+                "reason": reason,
+                "timestamp": datetime.now().isoformat()
+            })
+
+        # Broadcast updated pending trades list
+        await manager.broadcast({
+            "type": "pending_trades_update",
+            "pending_trades": state.get_all_pending_trades(),
+            "count": len(state.pending_trades),
+            "timestamp": datetime.now().isoformat()
+        })
+
+        return {
+            "status": "success" if success else "failed",
+            "message": f"Trade {'executed' if success else 'failed'}: {trade['signal']} {trade['symbol']}" + (f" - {reason}" if not success else ""),
+            "reason": reason,
+            "trade_id": trade_id,
+            "symbol": trade["symbol"],
+            "signal": trade["signal"],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error executing approved trade: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to execute trade: {str(e)}")
+
+@app.post("/api/pending-trades/{trade_id}/reject")
+async def reject_trade(trade_id: str):
+    """Reject a pending trade"""
+    trade = state.get_pending_trade(trade_id)
+    if not trade:
+        raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found")
+
+    if trade.get("status") != "pending":
+        raise HTTPException(status_code=400, detail=f"Trade {trade_id} is not pending")
+
+    logger.info(f"User rejected trade: {trade['signal']} {trade['symbol']}")
+
+    # Remove from pending
+    state.remove_pending_trade(trade_id)
+
+    # Broadcast rejection
+    await manager.broadcast({
+        "type": "trade_rejected",
+        "symbol": trade["symbol"],
+        "signal": trade["signal"],
+        "trade_id": trade_id,
+        "timestamp": datetime.now().isoformat()
+    })
+
+    # Broadcast updated pending trades list
+    await manager.broadcast({
+        "type": "pending_trades_update",
+        "pending_trades": state.get_all_pending_trades(),
+        "count": len(state.pending_trades),
+        "timestamp": datetime.now().isoformat()
+    })
+
+    return {
+        "status": "rejected",
+        "message": f"Trade rejected: {trade['signal']} {trade['symbol']}",
+        "trade_id": trade_id,
+        "symbol": trade["symbol"],
+        "signal": trade["signal"],
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.post("/api/pending-trades/clear")
+async def clear_pending_trades():
+    """Clear all pending trades"""
+    count = len(state.pending_trades)
+    state.pending_trades.clear()
+
+    await manager.broadcast({
+        "type": "pending_trades_update",
+        "pending_trades": [],
+        "count": 0,
+        "timestamp": datetime.now().isoformat()
+    })
+
+    return {
+        "status": "success",
+        "message": f"Cleared {count} pending trades",
+        "timestamp": datetime.now().isoformat()
+    }
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")
