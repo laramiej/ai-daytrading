@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend + Trading Bot
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: ai-trading-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # These will come from Portainer environment variables
+      - PYTHONUNBUFFERED=1
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_PAPER_TRADING=${ALPACA_PAPER_TRADING:-true}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-anthropic}
+      - MAX_POSITION_SIZE=${MAX_POSITION_SIZE:-1000}
+      - MAX_DAILY_LOSS=${MAX_DAILY_LOSS:-500}
+      - MAX_TOTAL_EXPOSURE=${MAX_TOTAL_EXPOSURE:-5000}
+      - ENABLE_AUTO_TRADING=${ENABLE_AUTO_TRADING:-false}
+      - STOP_LOSS_PERCENTAGE=${STOP_LOSS_PERCENTAGE:-2.0}
+      - TAKE_PROFIT_PERCENTAGE=${TAKE_PROFIT_PERCENTAGE:-5.0}
+      - MAX_OPEN_POSITIONS=${MAX_OPEN_POSITIONS:-5}
+      - ENABLE_SHORT_SELLING=${ENABLE_SHORT_SELLING:-true}
+      - ENABLE_GOOGLE_TRENDS=${ENABLE_GOOGLE_TRENDS:-true}
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+      - ENABLE_FINNHUB=${ENABLE_FINNHUB:-true}
+      - WATCHLIST=${WATCHLIST:-AAPL,MSFT,GOOGL,AMZN,TSLA}
+    volumes:
+      - trading-logs:/app/logs
+      - trading-data:/app/web/data
+    restart: unless-stopped
+    networks:
+      - trading-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # React Frontend (served by nginx)
+  frontend:
+    build:
+      context: ./web/frontend
+      dockerfile: Dockerfile
+    container_name: ai-trading-frontend
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://${SYNOLOGY_IP:-localhost}:8000
+      - REACT_APP_WS_URL=ws://${SYNOLOGY_IP:-localhost}:8000
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+networks:
+  trading-network:
+    driver: bridge
+
+volumes:
+  trading-logs:
+    driver: local
+  trading-data:
+    driver: local
