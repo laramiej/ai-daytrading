@@ -23,6 +23,8 @@ numpy==1.26.2
 
 # Sentiment Analysis
 textblob==0.17.1
+pytrends==4.9.2  # Google Trends integration
+finnhub-python==2.4.20  # Finnhub API for sentiment data
 
 # Utilities
 requests==2.31.0

@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     max_open_positions: int = Field(5, env="MAX_OPEN_POSITIONS")
     enable_short_selling: bool = Field(True, env="ENABLE_SHORT_SELLING")
 
+    # Sentiment Analysis (Phase 2)
+    enable_google_trends: bool = Field(True, env="ENABLE_GOOGLE_TRENDS")
+    finnhub_api_key: Optional[str] = Field(None, env="FINNHUB_API_KEY")
+    enable_finnhub: bool = Field(True, env="ENABLE_FINNHUB")
+
     # Market Data
     watchlist: str = Field(
         "AAPL,MSFT,GOOGL,AMZN,TSLA,NVDA,META,AMD,NFLX,SPY",

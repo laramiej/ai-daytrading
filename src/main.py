@@ -47,8 +47,15 @@ class DayTradingBot:
         # Initialize LLM provider
         self.llm_provider = self._initialize_llm()
 
-        # Initialize market analyzer (set include_sentiment=False to avoid yfinance errors)
-        self.market_analyzer = MarketAnalyzer(self.broker, include_sentiment=False)
+        # Initialize market analyzer
+        # Note: Sentiment analysis improved in Phase 2 with Google Trends and Finnhub
+        self.market_analyzer = MarketAnalyzer(
+            self.broker,
+            include_sentiment=True,  # Re-enabled with Phase 2 improvements
+            enable_google_trends=self.settings.enable_google_trends,
+            finnhub_api_key=self.settings.finnhub_api_key,
+            enable_finnhub=self.settings.enable_finnhub
+        )
 
         # Initialize risk manager
         self.risk_manager = RiskManager(

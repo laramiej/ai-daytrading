@@ -16,17 +16,24 @@ logger = logging.getLogger(__name__)
 class MarketAnalyzer:
     """Analyzes market data and calculates technical indicators"""
 
-    def __init__(self, broker, include_sentiment: bool = True):
+    def __init__(self, broker, include_sentiment: bool = True, enable_google_trends: bool = True, finnhub_api_key: str = None, enable_finnhub: bool = True):
         """
         Initialize market analyzer
 
         Args:
             broker: Broker client instance for fetching data
             include_sentiment: Whether to include sentiment analysis
+            enable_google_trends: Whether to enable Google Trends analysis
+            finnhub_api_key: Finnhub API key (optional)
+            enable_finnhub: Whether to enable Finnhub analysis
         """
         self.broker = broker
         self.include_sentiment = include_sentiment
-        self.sentiment_analyzer = SentimentAnalyzer() if include_sentiment else None
+        self.sentiment_analyzer = SentimentAnalyzer(
+            enable_google_trends=enable_google_trends,
+            finnhub_api_key=finnhub_api_key,
+            enable_finnhub=enable_finnhub
+        ) if include_sentiment else None
         self._market_sentiment_cache = None
         self._market_sentiment_time = None
 
@@ -164,6 +171,73 @@ class MarketAnalyzer:
                 momentum = df["close"].iloc[-1] - df["close"].iloc[-10]
                 indicators["momentum_10"] = round(momentum, 2)
 
+            # VWAP (Volume-Weighted Average Price)
+            if len(df) >= 1 and df["volume"].sum() > 0:
+                vwap = (df["close"] * df["volume"]).sum() / df["volume"].sum()
+                indicators["VWAP"] = round(vwap, 2)
+
+                # VWAP position relative to current price
+                current_price = df["close"].iloc[-1]
+                indicators["VWAP_position"] = round(((current_price - vwap) / vwap) * 100, 2)
+
+            # ATR (Average True Range) - Volatility measure
+            if len(df) >= 14:
+                atr = self._calculate_atr(df, 14)
+                indicators["ATR_14"] = round(atr, 2)
+
+                # ATR as % of price (normalized volatility)
+                current_price = df["close"].iloc[-1]
+                if current_price > 0:
+                    indicators["ATR_percent"] = round((atr / current_price) * 100, 2)
+
+            # Stochastic Oscillator
+            if len(df) >= 14:
+                stoch = self._calculate_stochastic(df, 14, 3)
+                indicators["STOCH_K"] = round(stoch["k"], 2)
+                indicators["STOCH_D"] = round(stoch["d"], 2)
+
+                # Overbought/Oversold status
+                if stoch["k"] > 80:
+                    indicators["STOCH_signal"] = "Overbought"
+                elif stoch["k"] < 20:
+                    indicators["STOCH_signal"] = "Oversold"
+                else:
+                    indicators["STOCH_signal"] = "Neutral"
+
+            # OBV (On-Balance Volume) - Volume flow indicator
+            if len(df) >= 10:
+                obv = self._calculate_obv(df)
+                indicators["OBV"] = int(obv)
+
+                # OBV trend (10-period change)
+                if len(df) >= 20:
+                    price_change_10 = df["close"].diff().tail(10)
+                    direction_10 = np.sign(price_change_10)
+                    obv_10_ago = (direction_10 * df["volume"].tail(10)).fillna(0).cumsum().iloc[0]
+                    obv_change = obv - obv_10_ago
+                    indicators["OBV_trend"] = "Rising" if obv_change > 0 else "Falling"
+
+            # Pivot Points (Support/Resistance levels)
+            if len(df) >= 2:
+                pivots = self._calculate_pivot_points(df)
+                current_price = df["close"].iloc[-1]
+
+                indicators["PIVOT"] = round(pivots["pivot"], 2)
+                indicators["PIVOT_R1"] = round(pivots["resistance_1"], 2)
+                indicators["PIVOT_S1"] = round(pivots["support_1"], 2)
+                indicators["PIVOT_R2"] = round(pivots["resistance_2"], 2)
+                indicators["PIVOT_S2"] = round(pivots["support_2"], 2)
+
+                # Identify current position
+                if current_price > pivots["resistance_1"]:
+                    indicators["PIVOT_position"] = "Above R1 (Strong)"
+                elif current_price > pivots["pivot"]:
+                    indicators["PIVOT_position"] = "Above Pivot"
+                elif current_price > pivots["support_1"]:
+                    indicators["PIVOT_position"] = "Below Pivot"
+                else:
+                    indicators["PIVOT_position"] = "Below S1 (Weak)"
+
         except Exception as e:
             logger.error(f"Error calculating technical indicators: {e}")
 
@@ -218,6 +292,107 @@ class MarketAnalyzer:
             "upper": upper.iloc[-1],
             "middle": middle.iloc[-1],
             "lower": lower.iloc[-1]
+        }
+
+    def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
+        """
+        Calculate Average True Range
+
+        Args:
+            df: DataFrame with OHLC data
+            period: Lookback period (default 14)
+
+        Returns:
+            ATR value
+        """
+        # True Range = max(high-low, abs(high-prev_close), abs(low-prev_close))
+        high_low = df["high"] - df["low"]
+        high_close = abs(df["high"] - df["close"].shift(1))
+        low_close = abs(df["low"] - df["close"].shift(1))
+
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        atr = true_range.rolling(window=period).mean()
+
+        return atr.iloc[-1] if not pd.isna(atr.iloc[-1]) else 0.0
+
+    def _calculate_stochastic(self, df: pd.DataFrame, k_period: int = 14, d_period: int = 3) -> Dict[str, float]:
+        """
+        Calculate Stochastic Oscillator
+
+        Args:
+            df: DataFrame with OHLC data
+            k_period: %K period (default 14)
+            d_period: %D smoothing period (default 3)
+
+        Returns:
+            Dictionary with %K and %D values
+        """
+        # %K = 100 * (Close - Lowest Low) / (Highest High - Lowest Low)
+        low_min = df["low"].rolling(window=k_period).min()
+        high_max = df["high"].rolling(window=k_period).max()
+
+        k = 100 * ((df["close"] - low_min) / (high_max - low_min))
+        d = k.rolling(window=d_period).mean()
+
+        return {
+            "k": k.iloc[-1] if not pd.isna(k.iloc[-1]) else 50.0,
+            "d": d.iloc[-1] if not pd.isna(d.iloc[-1]) else 50.0
+        }
+
+    def _calculate_obv(self, df: pd.DataFrame) -> float:
+        """
+        Calculate On-Balance Volume
+
+        Args:
+            df: DataFrame with close prices and volume
+
+        Returns:
+            Current OBV value
+        """
+        # OBV increases by volume when price rises, decreases when price falls
+        price_change = df["close"].diff()
+        direction = np.sign(price_change)  # +1, 0, or -1
+
+        obv = (direction * df["volume"]).fillna(0).cumsum()
+
+        return obv.iloc[-1]
+
+    def _calculate_pivot_points(self, df: pd.DataFrame) -> Dict[str, float]:
+        """
+        Calculate Pivot Points (Standard Method)
+
+        Uses previous period's high, low, close to calculate support/resistance
+
+        Args:
+            df: DataFrame with OHLC data
+
+        Returns:
+            Dictionary with pivot levels
+        """
+        # Use previous bar's data
+        high = df["high"].iloc[-2] if len(df) >= 2 else df["high"].iloc[-1]
+        low = df["low"].iloc[-2] if len(df) >= 2 else df["low"].iloc[-1]
+        close = df["close"].iloc[-2] if len(df) >= 2 else df["close"].iloc[-1]
+
+        # Pivot Point
+        pivot = (high + low + close) / 3
+
+        # Support and Resistance levels
+        r1 = (2 * pivot) - low
+        s1 = (2 * pivot) - high
+        r2 = pivot + (high - low)
+        s2 = pivot - (high - low)
+        r3 = high + 2 * (pivot - low)
+        s3 = low - 2 * (high - pivot)
+
+        return {
+            "pivot": pivot,
+            "resistance_1": r1,
+            "resistance_2": r2,
+            "resistance_3": r3,
+            "support_1": s1,
+            "support_2": s2,
+            "support_3": s3
         }
 
     def _fetch_news(self, symbol: str, max_items: int = 5) -> List[str]:
