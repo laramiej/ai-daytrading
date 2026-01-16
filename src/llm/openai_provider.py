@@ -73,12 +73,23 @@ Your analysis should be:
 3. Clear about confidence levels
 4. Specific about entry/exit points
 5. Focused on day trading timeframes (intraday opportunities)
+6. Reference specific data points in your reasoning
+
+CRITICAL: Your "reasoning" field must be detailed and reference the specific data you analyzed:
+- Cite exact technical indicator values (e.g., "RSI at 45 indicates neutral momentum with room to rise")
+- Reference price levels (e.g., "Price at $175.50 is above VWAP at $175.00 showing bullish institutional activity")
+- Mention volume patterns (e.g., "Volume 1.2x average confirms trend strength")
+- Reference sentiment data (e.g., "Google Trends showing 1.35x rising interest supports momentum")
+- Cite support/resistance levels (e.g., "Pivot R1 at $176.20 provides near-term resistance target")
+- Explain how multiple indicators align or diverge
+
+Your reasoning should be 3-5 detailed sentences that justify your signal with specific data points.
 
 Format your response as JSON with these fields:
 {
   "signal": "BUY" | "SELL" | "HOLD",
   "confidence": 0-100,
-  "reasoning": "Brief explanation",
+  "reasoning": "Detailed explanation citing specific technical indicators, price levels, volume, sentiment, and support/resistance levels from the data provided. Explain how these data points support your signal. 3-5 sentences required.",
   "entry_price": <number or null>,
   "stop_loss": <number or null>,
   "take_profit": <number or null>,

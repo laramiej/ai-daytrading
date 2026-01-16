@@ -301,6 +301,35 @@ class TradingStrategy:
             if "momentum_10" in tech:
                 logger.info(f"  Momentum(10): {tech.get('momentum_10', 0):+.2f}")
 
+            # New indicators
+            if "VWAP" in tech:
+                vwap = tech["VWAP"]
+                vwap_pos = tech.get("VWAP_position", 0)
+                logger.info(f"  VWAP: ${vwap:.2f} (Price {vwap_pos:+.2f}% {'above' if vwap_pos > 0 else 'below'})")
+
+            if "ATR_14" in tech:
+                atr = tech["ATR_14"]
+                atr_pct = tech.get("ATR_percent", 0)
+                logger.info(f"  ATR(14): ${atr:.2f} ({atr_pct:.2f}% volatility)")
+
+            if "STOCH_K" in tech:
+                stoch_k = tech["STOCH_K"]
+                stoch_d = tech.get("STOCH_D", 0)
+                stoch_signal = tech.get("STOCH_signal", "N/A")
+                logger.info(f"  Stochastic: K={stoch_k:.1f}, D={stoch_d:.1f} ({stoch_signal})")
+
+            if "OBV" in tech:
+                obv = tech["OBV"]
+                obv_trend = tech.get("OBV_trend", "N/A")
+                logger.info(f"  OBV: {obv:,} ({obv_trend})")
+
+            if "PIVOT" in tech:
+                pivot = tech["PIVOT"]
+                r1 = tech.get("PIVOT_R1", 0)
+                s1 = tech.get("PIVOT_S1", 0)
+                position = tech.get("PIVOT_position", "N/A")
+                logger.info(f"  Pivot: ${pivot:.2f}, R1=${r1:.2f}, S1=${s1:.2f} ({position})")
+
         # Sentiment data (if available)
         if "market_sentiment" in market_data:
             sentiment = market_data["market_sentiment"]

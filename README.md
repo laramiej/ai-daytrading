@@ -5,7 +5,7 @@ An intelligent day trading system that uses Large Language Models (LLMs) to anal
 ## Features
 
 - **Multi-LLM Support**: Seamlessly switch between Anthropic Claude, OpenAI GPT-4, and Google Gemini
-- **Intelligent Analysis**: AI-powered market analysis using technical indicators, price data, and news
+- **Intelligent Analysis**: AI-powered market analysis using 12 technical indicators, price data, and news
 - **Short Selling Support**: Profit from declining stocks with configurable short selling (see [SHORT_SELLING.md](SHORT_SELLING.md))
 - **Portfolio Awareness**: AI considers your current positions, past trades, and portfolio constraints
 - **Sentiment Analysis**: Market and stock-specific sentiment from news, analysts, and momentum
@@ -296,6 +296,15 @@ Edit `src/strategy/trading_strategy.py` to customize:
 - Signal filtering logic
 
 ### Adjusting Technical Indicators
+
+The system includes 12 technical indicators (see [PREDICTOR_ANALYSIS.md](PREDICTOR_ANALYSIS.md)):
+
+**Moving Averages**: SMA (20, 50), EMA (12, 26)
+**Momentum**: RSI, Stochastic Oscillator
+**Trend**: MACD
+**Volatility**: Bollinger Bands, ATR
+**Volume**: Volume Ratio, VWAP, OBV
+**Support/Resistance**: Pivot Points
 
 Modify `src/strategy/market_analyzer.py` to:
 

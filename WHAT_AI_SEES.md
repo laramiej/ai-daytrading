@@ -19,6 +19,7 @@ The system fetches real-time data from Alpaca:
 - Current volume
 - Recent news headlines
 - Market sentiment indicators (if enabled)
+- 12 technical indicators (see below)
 ```
 
 ### 2. Technical Analysis Calculation
@@ -27,18 +28,46 @@ The system **calculates** (not just retrieves) technical indicators:
 
 ```python
 indicators = {
+    # Moving Averages
     "SMA_20": 174.80,          # 20-period Simple Moving Average
     "SMA_50": 172.40,          # 50-period Simple Moving Average
     "EMA_12": 175.10,          # 12-period Exponential Moving Average
     "EMA_26": 173.90,          # 26-period Exponential Moving Average
+
+    # Momentum Oscillators
     "RSI_14": 62.34,           # Relative Strength Index
+    "STOCH_K": 65.5,           # Stochastic %K
+    "STOCH_D": 62.1,           # Stochastic %D
+    "STOCH_signal": "Neutral", # Overbought/Oversold status
+
+    # Trend Indicators
     "MACD": 1.23,              # MACD line
     "MACD_signal": 0.98,       # MACD signal line
     "MACD_histogram": 0.25,    # MACD histogram
+
+    # Volatility Indicators
     "BB_upper": 178.45,        # Bollinger Band upper
     "BB_middle": 175.20,       # Bollinger Band middle
     "BB_lower": 171.95,        # Bollinger Band lower
+    "ATR_14": 2.50,            # Average True Range (14-period)
+    "ATR_percent": 1.42,       # ATR as % of price
+
+    # Volume Indicators
     "volume_ratio": 1.2,       # Current volume vs 20-day average
+    "VWAP": 175.00,            # Volume-Weighted Average Price
+    "VWAP_position": 0.28,     # Price position relative to VWAP (%)
+    "OBV": 12345678,           # On-Balance Volume
+    "OBV_trend": "Rising",     # Volume flow direction
+
+    # Support/Resistance
+    "PIVOT": 174.50,           # Pivot Point
+    "PIVOT_R1": 176.20,        # Resistance Level 1
+    "PIVOT_R2": 177.80,        # Resistance Level 2
+    "PIVOT_S1": 172.80,        # Support Level 1
+    "PIVOT_S2": 171.20,        # Support Level 2
+    "PIVOT_position": "Above Pivot",  # Current position
+
+    # Price Action
     "momentum_10": 2.5         # 10-period price momentum
 }
 ```
@@ -56,19 +85,39 @@ Daily Change: +0.75%
 Volume: 45,234,567
 
 Technical Indicators:
+  Moving Averages:
   - SMA_20: 174.80
   - SMA_50: 172.40
   - EMA_12: 175.10
   - EMA_26: 173.90
-  - RSI_14: 62.34
+
+  Momentum Oscillators:
+  - RSI_14: 62.34 (Neutral)
+  - Stochastic K: 65.5, D: 62.1 (Neutral)
+
+  Trend Indicators:
   - MACD: 1.23
   - MACD_signal: 0.98
   - MACD_histogram: 0.25
+
+  Volatility Indicators:
   - BB_upper: 178.45
   - BB_middle: 175.20
   - BB_lower: 171.95
-  - volume_ratio: 1.2
-  - momentum_10: 2.5
+  - ATR_14: 2.50 (1.42% volatility)
+
+  Volume Indicators:
+  - Volume_ratio: 1.2x average
+  - VWAP: 175.00 (Price +0.28% above)
+  - OBV: 12,345,678 (Rising)
+
+  Support/Resistance:
+  - Pivot: 174.50
+  - R1: 176.20, S1: 172.80
+  - Position: Above Pivot
+
+  Price Action:
+  - Momentum_10: 2.5
 
 Recent News Headlines:
   1. Apple announces new product line with strong pre-orders
@@ -142,19 +191,39 @@ Daily Change: +0.75%
 Volume: 45,234,567
 
 Technical Indicators:
+  Moving Averages:
   - SMA_20: 174.80
   - SMA_50: 172.40
   - EMA_12: 175.10
   - EMA_26: 173.90
-  - RSI_14: 62.34
+
+  Momentum Oscillators:
+  - RSI_14: 62.34 (Neutral)
+  - Stochastic K: 65.5, D: 62.1 (Neutral)
+
+  Trend Indicators:
   - MACD: 1.23
   - MACD_signal: 0.98
   - MACD_histogram: 0.25
+
+  Volatility Indicators:
   - BB_upper: 178.45
   - BB_middle: 175.20
   - BB_lower: 171.95
-  - volume_ratio: 1.2
-  - momentum_10: 2.5
+  - ATR_14: 2.50 (1.42% volatility)
+
+  Volume Indicators:
+  - Volume_ratio: 1.2x average
+  - VWAP: 175.00 (Price +0.28% above)
+  - OBV: 12,345,678 (Rising)
+
+  Support/Resistance:
+  - Pivot: 174.50
+  - R1: 176.20, S1: 172.80
+  - Position: Above Pivot
+
+  Price Action:
+  - Momentum_10: 2.5
 
 Recent News Headlines:
   1. Apple announces new product line with strong pre-orders
