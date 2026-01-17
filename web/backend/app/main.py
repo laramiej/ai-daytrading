@@ -23,6 +23,7 @@ import json
 
 from src.utils import load_settings
 from src.broker import AlpacaBroker
+from src.reports import DailyReportManager
 
 # Import DayTradingBot components
 from llm import LLMFactory
@@ -63,6 +64,8 @@ class TradingState:
         self.initialized = False  # Track if trading components are ready
         self.pending_trades: Dict[str, dict] = {}  # trade_id -> signal data for approval
         self._trade_counter = 0  # For generating unique trade IDs
+        self.report_manager = DailyReportManager()  # Daily report manager
+        self._previous_market_open = None  # Track market state for snapshots
 
     def add_pending_trade(self, signal) -> str:
         """Add a signal to pending trades for approval"""
@@ -248,7 +251,9 @@ class TradingState:
                 Execute a trading signal
 
                 Returns:
-                    Tuple of (success: bool, reason: str)
+                    Tuple of (success: bool, reason: str, quantity: float, price: float, realized_pnl: float or None)
+                    - quantity and price are 0 if trade failed/blocked
+                    - realized_pnl is set when closing a position, None otherwise
                 """
                 logger.info(f"Processing signal: {signal.signal} {signal.symbol}")
 
@@ -260,6 +265,9 @@ class TradingState:
                     # Check if we have an existing position
                     positions = self.broker.get_positions()
                     existing_position = next((p for p in positions if p.symbol == signal.symbol), None)
+
+                    # Track realized P&L when closing positions
+                    realized_pnl = None
 
                     # Determine quantity based on signal type and existing position
                     # Get position side if we have a position (handle both string and enum)
@@ -303,7 +311,7 @@ class TradingState:
                         if not self.risk_manager.limits.enable_short_selling:
                             reason = f"Short selling is DISABLED in settings - cannot short {signal.symbol}"
                             logger.warning(f"⚠️ BLOCKED: {reason}")
-                            return False, reason
+                            return False, reason, 0, current_price, None
                         # Calculate short position size with dynamic sizing
                         if signal.entry_price and signal.stop_loss:
                             base_quantity, sizing_explanation = self.risk_manager.calculate_position_size(
@@ -372,7 +380,7 @@ class TradingState:
                     if quantity <= 0:
                         reason = "Insufficient exposure budget remaining - position would be 0 shares"
                         logger.warning(f"TRADE BLOCKED [{signal.symbol}]: {reason}")
-                        return False, reason
+                        return False, reason, 0, current_price, None
 
                     # Evaluate risk
                     risk_decision = self.risk_manager.evaluate_trade(
@@ -385,7 +393,7 @@ class TradingState:
                     if not risk_decision.approved:
                         reason = f"Risk manager: {risk_decision.reason}"
                         logger.warning(f"Trade blocked - {reason}")
-                        return False, reason
+                        return False, reason, 0, current_price, None
 
                     final_quantity = risk_decision.recommended_quantity or quantity
 
@@ -393,7 +401,7 @@ class TradingState:
                     if final_quantity <= 0:
                         reason = "Final quantity is 0 or negative - cannot execute trade"
                         logger.warning(f"TRADE BLOCKED [{signal.symbol}]: {reason}")
-                        return False, reason
+                        return False, reason, 0, current_price, None
 
                     # Determine stop-loss and take-profit prices
                     # Use AI-provided prices if available, otherwise calculate from settings
@@ -406,25 +414,77 @@ class TradingState:
                         (side == "sell" and position_side == "long")
                     )
 
+                    # When closing a position, capture the realized P&L and cancel any existing orders
+                    if is_closing_position and existing_position:
+                        # Capture realized P&L from the position we're about to close
+                        realized_pnl = existing_position.pnl
+                        logger.info(f"Closing position for {signal.symbol} - Realized P&L: ${realized_pnl:.2f}")
+
+                        # Cancel any existing orders (e.g., stop-loss and take-profit legs from bracket orders)
+                        cancelled = self.broker.cancel_orders_for_symbol(signal.symbol)
+                        if cancelled > 0:
+                            logger.info(f"Cancelled {cancelled} existing orders for {signal.symbol} before closing position")
+                            # Small delay to ensure orders are cancelled before placing new order
+                            import time
+                            time.sleep(0.5)
+
                     if not is_closing_position:
-                        # Use AI-provided prices first
+                        # Minimum buffer from current price (Alpaca requires at least $0.01)
+                        # We use 0.5% or $0.05 minimum to account for price movement between validation and order
+                        min_buffer = max(0.05, current_price * 0.005)
+
+                        # Use AI-provided prices first, but validate they make sense
                         if signal.stop_loss:
-                            stop_loss_price = signal.stop_loss
-                        elif self.settings.stop_loss_percentage > 0:
-                            # Calculate from settings percentage
+                            # Validate stop-loss is on correct side of price WITH buffer
+                            if side == "buy" and signal.stop_loss < (current_price - min_buffer):
+                                stop_loss_price = signal.stop_loss
+                            elif side == "sell" and signal.stop_loss > (current_price + min_buffer):
+                                stop_loss_price = signal.stop_loss
+                            else:
+                                logger.warning(f"AI stop-loss ${signal.stop_loss:.2f} is too close to price ${current_price:.2f} for {side.upper()}, using settings")
+                                # Fall through to calculate from settings
+
+                        # If no valid AI stop-loss, calculate from settings
+                        if stop_loss_price is None and self.settings.stop_loss_percentage > 0:
                             if side == "buy":
                                 stop_loss_price = round(current_price * (1 - self.settings.stop_loss_percentage / 100), 2)
                             else:  # short position
                                 stop_loss_price = round(current_price * (1 + self.settings.stop_loss_percentage / 100), 2)
 
                         if signal.take_profit:
-                            take_profit_price = signal.take_profit
-                        elif self.settings.take_profit_percentage > 0:
-                            # Calculate from settings percentage
+                            # Validate take-profit is on correct side of price WITH buffer
+                            if side == "buy" and signal.take_profit > (current_price + min_buffer):
+                                take_profit_price = signal.take_profit
+                            elif side == "sell" and signal.take_profit < (current_price - min_buffer):
+                                take_profit_price = signal.take_profit
+                            else:
+                                logger.warning(f"AI take-profit ${signal.take_profit:.2f} is too close to price ${current_price:.2f} for {side.upper()}, using settings")
+                                # Fall through to calculate from settings
+
+                        # If no valid AI take-profit, calculate from settings
+                        if take_profit_price is None and self.settings.take_profit_percentage > 0:
                             if side == "buy":
                                 take_profit_price = round(current_price * (1 + self.settings.take_profit_percentage / 100), 2)
                             else:  # short position
                                 take_profit_price = round(current_price * (1 - self.settings.take_profit_percentage / 100), 2)
+
+                    # Final validation: ensure stop-loss meets Alpaca's requirements
+                    # Alpaca requires stop_loss to be at least $0.01 away from current price
+                    if stop_loss_price:
+                        if side == "buy" and stop_loss_price >= (current_price - 0.01):
+                            logger.warning(f"Stop-loss ${stop_loss_price:.2f} too close to price ${current_price:.2f}, recalculating")
+                            stop_loss_price = round(current_price * 0.98, 2)  # Force 2% below
+                        elif side == "sell" and stop_loss_price <= (current_price + 0.01):
+                            logger.warning(f"Stop-loss ${stop_loss_price:.2f} too close to price ${current_price:.2f}, recalculating")
+                            stop_loss_price = round(current_price * 1.02, 2)  # Force 2% above
+
+                    if take_profit_price:
+                        if side == "buy" and take_profit_price <= (current_price + 0.01):
+                            logger.warning(f"Take-profit ${take_profit_price:.2f} too close to price ${current_price:.2f}, recalculating")
+                            take_profit_price = round(current_price * 1.05, 2)  # Force 5% above
+                        elif side == "sell" and take_profit_price >= (current_price - 0.01):
+                            logger.warning(f"Take-profit ${take_profit_price:.2f} too close to price ${current_price:.2f}, recalculating")
+                            take_profit_price = round(current_price * 0.95, 2)  # Force 5% below
 
                     # Place order (bracket if protective orders, simple market otherwise)
                     if stop_loss_price or take_profit_price:
@@ -459,14 +519,17 @@ class TradingState:
                     )
 
                     logger.info(f"Order placed successfully! Order ID: {order.order_id}")
-                    return True, f"Order placed: {order_desc}"
+                    return True, f"Order placed: {order_desc}", final_quantity, current_price, realized_pnl
 
                 except Exception as e:
                     reason = f"Error executing signal: {str(e)}"
                     logger.error(reason)
-                    return False, reason
+                    return False, reason, 0, 0, None
 
         self.trading_bot = SimpleTradingBot(self.broker, strategy, risk_manager, self.settings)
+
+        # Connect report manager with trading components
+        self.report_manager.set_trading_components(self.broker, risk_manager, portfolio)
 
 state = TradingState()
 
@@ -885,7 +948,22 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
     try:
         while state.bot_running:
             # Check if market is open
-            if not state.trading_bot.broker.is_market_open():
+            market_is_open = state.trading_bot.broker.is_market_open()
+
+            # Detect market state transitions for automatic snapshots
+            if state._previous_market_open is not None:
+                if not state._previous_market_open and market_is_open:
+                    # Market just opened - capture market open snapshot
+                    logger.info("Market opened - capturing market open snapshot")
+                    state.report_manager.capture_snapshot("market_open")
+                elif state._previous_market_open and not market_is_open:
+                    # Market just closed - capture market close snapshot
+                    logger.info("Market closed - capturing market close snapshot")
+                    state.report_manager.capture_snapshot("market_close")
+
+            state._previous_market_open = market_is_open
+
+            if not market_is_open:
                 logger.info("Market is closed - waiting 60 seconds before checking again")
                 await manager.broadcast({
                     "type": "market_closed",
@@ -948,6 +1026,9 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
 
                     # Analyze the symbol
                     signal = state.trading_bot.analyze_symbol(symbol)
+
+                    # Track signal analyzed in daily report
+                    state.report_manager.record_signal_analyzed()
 
                     if signal:
                         # Determine if this is actionable (BUY/SELL with high confidence)
@@ -1023,9 +1104,21 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
 
                         for signal in actionable_signals:
                             logger.info(f"Attempting: {signal.signal} {signal.symbol} ({signal.confidence}%)")
-                            success, reason = state.trading_bot.execute_signal(signal)
+                            success, reason, exec_quantity, exec_price, exec_realized_pnl = state.trading_bot.execute_signal(signal)
 
                             if success:
+                                # Record trade in daily report with actual execution details
+                                state.report_manager.record_trade({
+                                    "symbol": signal.symbol,
+                                    "side": "buy" if signal.signal == "BUY" else "sell",
+                                    "quantity": exec_quantity,
+                                    "price": exec_price,
+                                    "signal_confidence": signal.confidence,
+                                    "llm_provider": signal.llm_provider,
+                                    "reasoning": signal.reasoning,
+                                    "realized_pnl": exec_realized_pnl,  # Set when closing a position
+                                })
+
                                 await manager.broadcast({
                                     "type": "trade_executed",
                                     "success": True,
@@ -1036,6 +1129,18 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
                                     "timestamp": datetime.now().isoformat()
                                 })
                             else:
+                                # Record blocked trade in daily report
+                                state.report_manager.record_trade({
+                                    "symbol": signal.symbol,
+                                    "side": "buy" if signal.signal == "BUY" else "sell",
+                                    "quantity": exec_quantity,  # May be 0 if blocked early
+                                    "price": exec_price,
+                                    "signal_confidence": signal.confidence,
+                                    "llm_provider": signal.llm_provider,
+                                    "reasoning": signal.reasoning,
+                                    "block_reason": reason,
+                                }, blocked=True)
+
                                 # Trade blocked by risk manager - broadcast with detailed reason
                                 await manager.broadcast({
                                     "type": "trade_blocked",
@@ -1233,7 +1338,31 @@ async def approve_trade(trade_id: str):
 
         # Execute the trade
         logger.info(f"User approved trade: {trade['signal']} {trade['symbol']}")
-        success, reason = state.trading_bot.execute_signal(signal)
+        success, reason, exec_quantity, exec_price, exec_realized_pnl = state.trading_bot.execute_signal(signal)
+
+        # Record trade in daily report with actual execution details
+        if success:
+            state.report_manager.record_trade({
+                "symbol": trade["symbol"],
+                "side": "buy" if trade["signal"] == "BUY" else "sell",
+                "quantity": exec_quantity,
+                "price": exec_price,
+                "signal_confidence": trade.get("confidence", 0),
+                "llm_provider": trade.get("llm_provider", ""),
+                "reasoning": trade.get("reasoning", ""),
+                "realized_pnl": exec_realized_pnl,  # Set when closing a position
+            })
+        else:
+            state.report_manager.record_trade({
+                "symbol": trade["symbol"],
+                "side": "buy" if trade["signal"] == "BUY" else "sell",
+                "quantity": exec_quantity,  # May be 0 if blocked early
+                "price": exec_price,
+                "signal_confidence": trade.get("confidence", 0),
+                "llm_provider": trade.get("llm_provider", ""),
+                "reasoning": trade.get("reasoning", ""),
+                "block_reason": reason,
+            }, blocked=True)
 
         # Remove from pending
         state.remove_pending_trade(trade_id)
@@ -1344,6 +1473,106 @@ async def clear_pending_trades():
         "message": f"Cleared {count} pending trades",
         "timestamp": datetime.now().isoformat()
     }
+
+
+# ============================================
+# Daily Reports API Endpoints
+# ============================================
+
+@app.get("/api/reports")
+async def list_reports():
+    """Get list of available daily reports"""
+    try:
+        report_dates = state.report_manager.list_available_reports()
+        summaries = []
+        for date_str in report_dates[:30]:  # Limit to last 30 reports
+            summary = state.report_manager.get_report_summary(date_str)
+            if summary:
+                summaries.append(summary)
+
+        return {
+            "reports": summaries,
+            "count": len(summaries),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error listing reports: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/reports/today")
+async def get_today_report():
+    """Get today's report (may be incomplete/in-progress)"""
+    try:
+        report = state.report_manager.get_or_create_today_report()
+        return {
+            "report": report.to_dict(),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting today's report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/reports/{date}")
+async def get_report(date: str):
+    """Get daily report for a specific date (YYYY-MM-DD format)"""
+    # Validate date format
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    try:
+        report = state.report_manager.load_report(date)
+        if not report:
+            raise HTTPException(status_code=404, detail=f"No report found for {date}")
+
+        return {
+            "report": report.to_dict(),
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting report for {date}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/reports/snapshot")
+async def capture_snapshot(body: dict = None):
+    """Manually capture a portfolio snapshot"""
+    if not state.initialized or state.broker is None:
+        raise HTTPException(status_code=503, detail="Trading system not initialized")
+
+    snapshot_type = "manual"
+    if body and "snapshot_type" in body:
+        snapshot_type = body["snapshot_type"]
+        if snapshot_type not in ["market_open", "market_close", "manual"]:
+            raise HTTPException(status_code=400, detail="Invalid snapshot_type. Use: market_open, market_close, or manual")
+
+    try:
+        snapshot = state.report_manager.capture_snapshot(snapshot_type)
+        if not snapshot:
+            raise HTTPException(status_code=500, detail="Failed to capture snapshot")
+
+        return {
+            "status": "success",
+            "message": f"Captured {snapshot_type} snapshot",
+            "snapshot": {
+                "timestamp": snapshot.timestamp,
+                "snapshot_type": snapshot.snapshot_type,
+                "portfolio_value": snapshot.portfolio_value,
+                "cash": snapshot.cash,
+                "equity": snapshot.equity,
+                "total_positions": snapshot.total_positions
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error capturing snapshot: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")

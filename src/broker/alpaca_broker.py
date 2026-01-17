@@ -354,6 +354,34 @@ class AlpacaBroker:
             logger.error(f"Error cancelling order {order_id}: {e}")
             return False
 
+    def cancel_orders_for_symbol(self, symbol: str) -> int:
+        """
+        Cancel all open orders for a specific symbol.
+        This is useful when closing a position that has bracket orders attached.
+
+        Args:
+            symbol: Stock symbol
+
+        Returns:
+            Number of orders cancelled
+        """
+        try:
+            orders = self.get_open_orders()
+            symbol_orders = [o for o in orders if o.symbol == symbol]
+
+            cancelled_count = 0
+            for order in symbol_orders:
+                if self.cancel_order(order.order_id):
+                    cancelled_count += 1
+
+            if cancelled_count > 0:
+                logger.info(f"Cancelled {cancelled_count} orders for {symbol}")
+
+            return cancelled_count
+        except Exception as e:
+            logger.error(f"Error cancelling orders for {symbol}: {e}")
+            return 0
+
     def get_latest_quote(self, symbol: str) -> Dict[str, Any]:
         """Get latest quote for a symbol"""
         try:

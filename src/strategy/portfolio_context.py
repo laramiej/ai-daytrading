@@ -213,7 +213,8 @@ class PortfolioContext:
             Dictionary with symbol trading history
         """
         symbol_trades = [t for t in self.trade_history if t.symbol == symbol]
-        perf = self.symbol_performance.get(symbol, {})
+        # Access defaultdict directly to get default values if symbol not present
+        perf = self.symbol_performance[symbol]
 
         return {
             "symbol": symbol,
@@ -304,17 +305,20 @@ class PortfolioContext:
 
         # Add symbol performance history
         symbol_hist = self.get_symbol_history(symbol)
-        if symbol_hist["performance"].get("total_trades", 0) > 0:
-            perf = symbol_hist["performance"]
-            win_rate = (perf["wins"] / perf["total_trades"] * 100) if perf["total_trades"] > 0 else 0
+        perf = symbol_hist.get("performance", {})
+        total_trades = perf.get("total_trades", 0)
+        if total_trades > 0:
+            wins = perf.get("wins", 0)
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
             recommendations["considerations"].append(
-                f"Historical win rate: {win_rate:.1f}% ({perf['wins']}/{perf['total_trades']} trades)"
+                f"Historical win rate: {win_rate:.1f}% ({wins}/{total_trades} trades)"
             )
 
-            if perf["total_pnl"] != 0:
+            total_pnl = perf.get("total_pnl", 0)
+            if total_pnl != 0:
                 recommendations["considerations"].append(
-                    f"Cumulative P&L: ${perf['total_pnl']:.2f}"
+                    f"Cumulative P&L: ${total_pnl:.2f}"
                 )
 
         return recommendations
@@ -425,11 +429,13 @@ class PortfolioContext:
             lines.append("⚠️  Daily loss limit REACHED")
 
         # Performance
-        perf = summary["performance"]
-        if perf["total_trades"] > 0:
+        perf = summary.get("performance", {})
+        if perf.get("total_trades", 0) > 0:
             lines.append(f"\n📈 PERFORMANCE")
-            lines.append(f"Total Trades: {perf['total_trades']}")
-            lines.append(f"Win Rate: {perf['win_rate']:.1f}% ({perf['wins']}W/{perf['losses']}L)")
-            lines.append(f"Total P&L: ${perf['total_pnl']:.2f}")
+            lines.append(f"Total Trades: {perf.get('total_trades', 0)}")
+            wins = perf.get('wins', 0)
+            losses = perf.get('losses', 0)
+            lines.append(f"Win Rate: {perf.get('win_rate', 0):.1f}% ({wins}W/{losses}L)")
+            lines.append(f"Total P&L: ${perf.get('total_pnl', 0):.2f}")
 
         return "\n".join(lines)

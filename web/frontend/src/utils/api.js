@@ -95,6 +95,34 @@ export const apiClient = {
     const response = await api.post('/api/pending-trades/clear');
     return response.data;
   },
+
+  // ============================================
+  // Daily Reports
+  // ============================================
+
+  // Get list of available reports
+  getReports: async () => {
+    const response = await api.get('/api/reports');
+    return response.data;
+  },
+
+  // Get today's report (in-progress)
+  getTodayReport: async () => {
+    const response = await api.get('/api/reports/today');
+    return response.data;
+  },
+
+  // Get report for a specific date
+  getReport: async (date) => {
+    const response = await api.get(`/api/reports/${date}`);
+    return response.data;
+  },
+
+  // Manually capture a portfolio snapshot
+  captureSnapshot: async (snapshotType = 'manual') => {
+    const response = await api.post('/api/reports/snapshot', { snapshot_type: snapshotType });
+    return response.data;
+  },
 };
 
 export default apiClient;
