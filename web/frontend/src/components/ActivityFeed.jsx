@@ -24,7 +24,8 @@ import {
   FireIcon,
   ChatBubbleLeftRightIcon
 } from '@heroicons/react/24/outline';
-import { formatDateTime } from '../utils/formatters';
+import { formatDateTime, getConfidenceLevel, formatConfidence } from '../utils/formatters';
+import ConfidenceBadge from './ConfidenceBadge';
 import apiClient from '../utils/api';
 
 const ActivityFeed = ({ activities }) => {
@@ -207,12 +208,13 @@ const ActivityFeed = ({ activities }) => {
   };
 
   const getConfidenceExplanation = (signal, confidence) => {
+    const level = getConfidenceLevel(confidence);
     if (signal === 'BUY') {
-      return `${confidence}% confident this is a good buy opportunity`;
+      return `${level.label} confidence (${confidence}%) - AI sees this as a good buy opportunity`;
     } else if (signal === 'SELL') {
-      return `${confidence}% confident this should be sold`;
+      return `${level.label} confidence (${confidence}%) - AI recommends selling`;
     } else if (signal === 'HOLD') {
-      return `${confidence}% confident no action needed - wait for better setup`;
+      return `${level.label} confidence (${confidence}%) - AI recommends waiting for better setup`;
     }
     return '';
   };
@@ -365,7 +367,7 @@ const ActivityFeed = ({ activities }) => {
             )}
           </div>
           <div className="flex items-center gap-3">
-            {/* Compact Metrics - Show confidence with explanation */}
+            {/* Compact Metrics - Show confidence level with signal */}
             <div className="hidden sm:flex items-center gap-2 text-xs">
               <div className="flex items-center gap-1" title={getConfidenceExplanation(data.signal, data.confidence)}>
                 <span className={`font-semibold px-2 py-0.5 rounded ${
@@ -374,8 +376,9 @@ const ActivityFeed = ({ activities }) => {
                   isHold ? 'bg-slate-700 text-slate-300' :
                   'bg-slate-700 text-slate-400'
                 }`}>
-                  {data.confidence}% {data.signal}
+                  {data.signal}
                 </span>
+                <ConfidenceBadge confidence={data.confidence} size="sm" />
               </div>
               {data.entry_price && !isHold && (
                 <div className="flex items-center gap-1">
@@ -401,11 +404,14 @@ const ActivityFeed = ({ activities }) => {
               isSell ? 'bg-red-900/30 border border-red-700 text-red-300' :
               'bg-slate-700/50 border border-slate-600 text-slate-300'
             }`}>
-              <span className="font-semibold">{data.confidence}% {data.signal}:</span>{' '}
-              {isBuy && 'AI is confident this is a good buying opportunity based on technical and sentiment analysis.'}
-              {isSell && 'AI recommends selling based on bearish signals in the analysis.'}
-              {isHold && 'AI recommends waiting - no clear trade setup detected. The market conditions or technicals are mixed.'}
-              {isError && 'Analysis failed for this symbol.'}
+              <span className="font-semibold">{data.signal}</span>{' '}
+              <ConfidenceBadge confidence={data.confidence} size="sm" showPercent={true} />
+              <span className="ml-2">
+                {isBuy && '- AI sees this as a good buying opportunity based on technical and sentiment analysis.'}
+                {isSell && '- AI recommends selling based on bearish signals in the analysis.'}
+                {isHold && '- AI recommends waiting for better setup. Market conditions or technicals are mixed.'}
+                {isError && '- Analysis failed for this symbol.'}
+              </span>
             </div>
 
             {/* Metrics Grid - Only show trade details for BUY/SELL */}
@@ -504,12 +510,7 @@ const ActivityFeed = ({ activities }) => {
               APPROVAL REQUIRED
             </span>
           </div>
-          <span className={`font-semibold ${
-            data.confidence >= 80 ? 'text-green-400' :
-            data.confidence >= 70 ? 'text-yellow-400' : 'text-orange-400'
-          }`}>
-            {data.confidence}% confidence
-          </span>
+          <ConfidenceBadge confidence={data.confidence} size="md" />
         </div>
 
         {/* Quick metrics */}
@@ -635,10 +636,10 @@ const ActivityFeed = ({ activities }) => {
                 </p>
                 <p className="text-xs text-slate-500">{formatDateTime(activity.timestamp)}</p>
               </div>
-              <p className="mt-1 text-sm text-white font-semibold">
+              <p className="mt-1 text-sm text-white font-semibold flex items-center gap-2">
                 {activity.data.symbol}
                 {activity.data.confidence && (
-                  <span className="ml-2 text-slate-400 font-normal">({activity.data.confidence}% confidence)</span>
+                  <ConfidenceBadge confidence={activity.data.confidence} size="sm" />
                 )}
               </p>
             </div>
@@ -687,10 +688,10 @@ const ActivityFeed = ({ activities }) => {
                 </p>
                 <p className="text-xs text-slate-500">{formatDateTime(activity.timestamp)}</p>
               </div>
-              <p className="mt-1 text-sm text-white font-semibold">
+              <p className="mt-1 text-sm text-white font-semibold flex items-center gap-2">
                 {activity.data.symbol}
                 {activity.data.confidence && (
-                  <span className="ml-2 text-slate-400 font-normal">({activity.data.confidence}% confidence)</span>
+                  <ConfidenceBadge confidence={activity.data.confidence} size="sm" />
                 )}
               </p>
               {activity.data.reason && (

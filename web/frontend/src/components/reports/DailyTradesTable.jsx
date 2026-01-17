@@ -7,6 +7,7 @@ import {
   FunnelIcon,
 } from '@heroicons/react/24/outline';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
+import ConfidenceBadge from '../ConfidenceBadge';
 
 const DailyTradesTable = ({ trades = [], blockedTrades = [] }) => {
   const [showBlocked, setShowBlocked] = useState(true);
@@ -38,21 +39,6 @@ const DailyTradesTable = ({ trades = [], blockedTrades = [] }) => {
       second: '2-digit',
       hour12: true
     });
-  };
-
-  // Render confidence badge
-  const ConfidenceBadge = ({ confidence }) => {
-    const getColor = (conf) => {
-      if (conf >= 80) return 'bg-green-900/30 text-green-400 border-green-700';
-      if (conf >= 60) return 'bg-yellow-900/30 text-yellow-400 border-yellow-700';
-      return 'bg-red-900/30 text-red-400 border-red-700';
-    };
-
-    return (
-      <span className={`px-2 py-0.5 text-xs rounded-full border ${getColor(confidence)}`}>
-        {confidence?.toFixed(0)}%
-      </span>
-    );
   };
 
   if (allTrades.length === 0) {
@@ -122,7 +108,7 @@ const DailyTradesTable = ({ trades = [], blockedTrades = [] }) => {
               <th className="pb-3 font-medium text-right">Price</th>
               <th className="pb-3 font-medium text-right">Value</th>
               <th className="pb-3 font-medium text-right">P&L</th>
-              <th className="pb-3 font-medium text-center">Conf</th>
+              <th className="pb-3 font-medium text-center">Confidence</th>
               <th className="pb-3 font-medium">Provider</th>
               <th className="pb-3 font-medium">Status</th>
             </tr>
@@ -172,7 +158,7 @@ const DailyTradesTable = ({ trades = [], blockedTrades = [] }) => {
                   )}
                 </td>
                 <td className="py-3 text-center">
-                  <ConfidenceBadge confidence={trade.signal_confidence} />
+                  <ConfidenceBadge confidence={trade.signal_confidence} size="sm" showPercent={false} />
                 </td>
                 <td className="py-3 text-slate-400 text-xs">
                   {trade.llm_provider}
