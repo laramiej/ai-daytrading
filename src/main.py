@@ -13,6 +13,7 @@ from strategy import MarketAnalyzer, TradingStrategy
 from strategy.portfolio_context import PortfolioContext
 from risk import RiskManager, RiskLimits
 from utils import load_settings, ApprovalWorkflow
+from reports.daily_report import DailyReportManager
 
 # Setup logging
 logging.basicConfig(
@@ -87,7 +88,43 @@ class DayTradingBot:
             auto_approve=self.settings.enable_auto_trading
         )
 
+        # Initialize daily report manager for session snapshots
+        self.daily_report = DailyReportManager(
+            broker=self.broker,
+            risk_manager=self.risk_manager,
+            portfolio=self.portfolio
+        )
+
         logger.info("✅ Bot initialized successfully")
+
+    def start_session(self):
+        """Start trading session - capture market open snapshot"""
+        logger.info("Starting trading session...")
+        snapshot = self.daily_report.capture_snapshot("market_open")
+        if snapshot:
+            logger.info(f"📸 Market open snapshot captured - Portfolio: ${snapshot.portfolio_value:,.2f}")
+        else:
+            logger.warning("Failed to capture market open snapshot")
+        return snapshot
+
+    def end_session(self):
+        """End trading session - capture market close snapshot"""
+        logger.info("Ending trading session...")
+        snapshot = self.daily_report.capture_snapshot("market_close")
+        if snapshot:
+            logger.info(f"📸 Market close snapshot captured - Portfolio: ${snapshot.portfolio_value:,.2f}")
+            logger.info(f"💰 Daily P&L: ${snapshot.daily_pnl:,.2f}")
+
+            # Log summary of the day
+            report = self.daily_report.get_or_create_today_report()
+            logger.info(f"📊 Session Summary:")
+            logger.info(f"   Trades executed: {report.trade_count}")
+            logger.info(f"   Realized P&L: ${report.realized_pnl:,.2f}")
+            logger.info(f"   Unrealized P&L: ${report.unrealized_pnl:,.2f}")
+            logger.info(f"   Total P&L: ${report.total_pnl:,.2f}")
+        else:
+            logger.warning("Failed to capture market close snapshot")
+        return snapshot
 
     def _initialize_llm(self):
         """Initialize LLM provider"""
@@ -439,24 +476,17 @@ class DayTradingBot:
             )
 
             if not is_closing_position:
-                # Use AI-provided prices first
+                # Use AI-provided prices only - no percentage fallback
+                # AI is required to provide stop_loss and take_profit based on indicators
                 if signal.stop_loss:
                     stop_loss_price = signal.stop_loss
-                elif self.settings.stop_loss_percentage > 0:
-                    # Calculate from settings percentage
-                    if side == "buy":
-                        stop_loss_price = round(current_price * (1 - self.settings.stop_loss_percentage / 100), 2)
-                    else:  # short position
-                        stop_loss_price = round(current_price * (1 + self.settings.stop_loss_percentage / 100), 2)
+                else:
+                    logger.warning(f"AI did not provide stop_loss for {signal.symbol} - no protective stop will be set")
 
                 if signal.take_profit:
                     take_profit_price = signal.take_profit
-                elif self.settings.take_profit_percentage > 0:
-                    # Calculate from settings percentage
-                    if side == "buy":
-                        take_profit_price = round(current_price * (1 + self.settings.take_profit_percentage / 100), 2)
-                    else:  # short position
-                        take_profit_price = round(current_price * (1 - self.settings.take_profit_percentage / 100), 2)
+                else:
+                    logger.warning(f"AI did not provide take_profit for {signal.symbol} - no take profit will be set")
 
             # Execute trade
             logger.info(f"Executing: {side.upper()} {final_quantity} {signal.symbol}")
@@ -753,9 +783,13 @@ class DayTradingBot:
 
 def main():
     """Main entry point"""
+    bot = None
     try:
         # Initialize bot
         bot = DayTradingBot()
+
+        # Start trading session - capture market open snapshot
+        bot.start_session()
 
         # Display status
         bot.display_status()
@@ -772,6 +806,14 @@ def main():
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
+    finally:
+        # Always capture market close snapshot on shutdown
+        if bot is not None:
+            logger.info("\n" + "=" * 70)
+            logger.info("SHUTTING DOWN - Capturing final session state...")
+            logger.info("=" * 70)
+            bot.end_session()
+            logger.info("✅ Session ended successfully. Goodbye!")
 
 
 if __name__ == "__main__":
