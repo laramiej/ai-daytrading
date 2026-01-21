@@ -304,67 +304,80 @@ class TradingStrategy:
             if "change_percent" in market_data:
                 logger.info(f"  Change: {market_data.get('change_percent', 0):+.2f}%")
 
-        # Technical indicators (using actual keys from market_analyzer.py)
+        # Technical indicators (INTRADAY - calculated on 1-minute bars)
         if "technical_indicators" in market_data:
             tech = market_data["technical_indicators"]
-            logger.info(f"📈 TECHNICAL INDICATORS:")
+            logger.info(f"📈 INTRADAY TECHNICAL INDICATORS (1-minute bars):")
 
-            if "RSI_14" in tech:
-                rsi = tech["RSI_14"]
-                logger.info(f"  RSI(14): {rsi:.2f} {'(Oversold)' if rsi < 30 else '(Overbought)' if rsi > 70 else '(Neutral)'}")
-
-            if "MACD" in tech:
-                logger.info(f"  MACD: {tech.get('MACD', 0):.2f}, Signal: {tech.get('MACD_signal', 0):.2f}")
-                logger.info(f"  MACD Histogram: {tech.get('MACD_histogram', 0):.2f}")
-
-            if "BB_upper" in tech:
-                logger.info(f"  Bollinger Bands: Upper ${tech.get('BB_upper', 0):.2f}, Middle ${tech.get('BB_middle', 0):.2f}, Lower ${tech.get('BB_lower', 0):.2f}")
-
-            if "SMA_20" in tech:
-                sma_20 = tech.get('SMA_20', 'N/A')
-                sma_50 = tech.get('SMA_50', 'N/A')
-                if isinstance(sma_20, (int, float)) and isinstance(sma_50, (int, float)):
-                    logger.info(f"  SMA(20): ${sma_20:.2f}, SMA(50): ${sma_50:.2f}")
-                elif isinstance(sma_20, (int, float)):
-                    logger.info(f"  SMA(20): ${sma_20:.2f}")
-
-            if "EMA_12" in tech:
-                logger.info(f"  EMA(12): ${tech.get('EMA_12', 0):.2f}, EMA(26): ${tech.get('EMA_26', 0):.2f}")
-
-            if "volume_ratio" in tech:
-                logger.info(f"  Volume Ratio: {tech.get('volume_ratio', 0):.2f}x average")
-
-            if "momentum_10" in tech:
-                logger.info(f"  Momentum(10): {tech.get('momentum_10', 0):+.2f}")
-
-            # New indicators
+            # VWAP - most important for day trading
             if "VWAP" in tech:
                 vwap = tech["VWAP"]
-                vwap_pos = tech.get("VWAP_position", 0)
-                logger.info(f"  VWAP: ${vwap:.2f} (Price {vwap_pos:+.2f}% {'above' if vwap_pos > 0 else 'below'})")
+                vwap_pos = tech.get("VWAP_position", "N/A")
+                vwap_dist = tech.get("VWAP_distance_percent", 0)
+                logger.info(f"  VWAP: ${vwap:.2f} ({vwap_pos}, {vwap_dist:+.2f}% from VWAP)")
 
-            if "ATR_14" in tech:
-                atr = tech["ATR_14"]
+            # RSI (14-minute)
+            if "RSI_14min" in tech:
+                rsi = tech["RSI_14min"]
+                rsi_signal = tech.get("RSI_signal", "N/A")
+                logger.info(f"  RSI (14-min): {rsi:.2f} - {rsi_signal}")
+
+            # Momentum
+            if "momentum_5min_percent" in tech:
+                logger.info(f"  5-min Momentum: {tech['momentum_5min_percent']:+.2f}%")
+            if "momentum_15min_percent" in tech:
+                logger.info(f"  15-min Momentum: {tech['momentum_15min_percent']:+.2f}%")
+
+            # MACD
+            if "MACD" in tech:
+                logger.info(f"  MACD: {tech.get('MACD', 0):.4f}, Signal: {tech.get('MACD_signal', 0):.4f}")
+                if "MACD_trend" in tech:
+                    logger.info(f"    Trend: {tech['MACD_trend']}")
+
+            # Bollinger Bands
+            if "BB_upper" in tech:
+                logger.info(f"  Bollinger Bands: ${tech.get('BB_lower', 0):.2f} - ${tech.get('BB_middle', 0):.2f} - ${tech.get('BB_upper', 0):.2f}")
+                if "BB_signal" in tech:
+                    logger.info(f"    Signal: {tech['BB_signal']}")
+
+            # Moving Averages (intraday)
+            if "SMA_9min" in tech:
+                logger.info(f"  SMA (9-min): ${tech['SMA_9min']:.2f}")
+            if "SMA_20min" in tech:
+                logger.info(f"  SMA (20-min): ${tech['SMA_20min']:.2f}")
+            if "EMA_9min" in tech:
+                logger.info(f"  EMA (9-min): ${tech['EMA_9min']:.2f}")
+            if "EMA_21min" in tech:
+                logger.info(f"  EMA (21-min): ${tech['EMA_21min']:.2f}")
+
+            # Volume
+            if "volume_ratio" in tech:
+                vol_signal = tech.get("volume_signal", "N/A")
+                logger.info(f"  Volume Ratio: {tech['volume_ratio']:.2f}x average ({vol_signal})")
+            if "OBV_trend" in tech:
+                logger.info(f"  OBV Trend: {tech['OBV_trend']}")
+
+            # ATR (14-minute)
+            if "ATR_14min" in tech:
+                atr = tech["ATR_14min"]
                 atr_pct = tech.get("ATR_percent", 0)
-                logger.info(f"  ATR(14): ${atr:.2f} ({atr_pct:.2f}% volatility)")
+                logger.info(f"  ATR (14-min): ${atr:.2f} ({atr_pct:.3f}% volatility)")
 
+            # Stochastic
             if "STOCH_K" in tech:
                 stoch_k = tech["STOCH_K"]
                 stoch_d = tech.get("STOCH_D", 0)
                 stoch_signal = tech.get("STOCH_signal", "N/A")
                 logger.info(f"  Stochastic: K={stoch_k:.1f}, D={stoch_d:.1f} ({stoch_signal})")
 
-            if "OBV" in tech:
-                obv = tech["OBV"]
-                obv_trend = tech.get("OBV_trend", "N/A")
-                logger.info(f"  OBV: {obv:,} ({obv_trend})")
-
-            if "PIVOT" in tech:
-                pivot = tech["PIVOT"]
-                r1 = tech.get("PIVOT_R1", 0)
-                s1 = tech.get("PIVOT_S1", 0)
-                position = tech.get("PIVOT_position", "N/A")
-                logger.info(f"  Pivot: ${pivot:.2f}, R1=${r1:.2f}, S1=${s1:.2f} ({position})")
+            # Intraday Pivot Points
+            if "intraday_pivot" in tech:
+                pivot = tech["intraday_pivot"]
+                r1 = tech.get("intraday_R1", 0)
+                s1 = tech.get("intraday_S1", 0)
+                position = tech.get("pivot_position", "N/A")
+                logger.info(f"  Intraday Pivot: ${pivot:.2f}, R1=${r1:.2f}, S1=${s1:.2f}")
+                logger.info(f"    Position: {position}")
 
         # Sentiment data (if available)
         if "market_sentiment" in market_data:

@@ -1,6 +1,14 @@
 """
 Market Data Analyzer
-Fetches and analyzes market data for trading decisions
+Fetches and analyzes market data for DAY TRADING decisions.
+
+IMPORTANT: All indicators are calculated on INTRADAY data (1-minute bars).
+This analyzer is specifically designed for day trading with a focus on:
+- Short-term momentum (minutes to hours)
+- Intraday support/resistance levels
+- Volume patterns within the trading day
+- Opening range breakouts
+- VWAP (the most important day trading indicator)
 """
 import yfinance as yf
 import pandas as pd
@@ -44,7 +52,14 @@ class MarketAnalyzer:
         include_news: bool = True
     ) -> Dict[str, Any]:
         """
-        Fetch comprehensive market data for a symbol
+        Fetch comprehensive INTRADAY market data for a symbol.
+
+        This method is designed for DAY TRADING and provides:
+        - Current quote data
+        - Intraday 1-minute bars (last 100 bars = ~1.5 hours)
+        - Daily context (today's open, previous close, daily high/low)
+        - Intraday technical indicators
+        - Opening range data (first 30 minutes high/low)
 
         Args:
             symbol: Stock symbol
@@ -52,22 +67,25 @@ class MarketAnalyzer:
             include_news: Include recent news
 
         Returns:
-            Dictionary with market data
+            Dictionary with market data optimized for day trading
         """
         try:
             # Get latest quote
             quote = self.broker.get_latest_quote(symbol)
 
-            # Get recent bars for technical analysis
-            bars = self.broker.get_bars(symbol, timeframe="1Min", limit=100)
+            # Get intraday 1-minute bars for short-term analysis
+            bars_1min = self.broker.get_bars(symbol, timeframe="1Min", limit=100)
 
-            if not bars:
+            if not bars_1min:
                 logger.warning(f"No bar data available for {symbol}")
                 return None
 
+            # Get daily bars for context (previous day's close, today's open)
+            daily_bars = self.broker.get_bars(symbol, timeframe="1Day", limit=2)
+
             # Calculate current price and change
             current_price = (quote["bid_price"] + quote["ask_price"]) / 2
-            df = pd.DataFrame(bars)
+            df = pd.DataFrame(bars_1min)
 
             market_data = {
                 "symbol": symbol,
@@ -78,20 +96,48 @@ class MarketAnalyzer:
                 "timestamp": datetime.now()
             }
 
-            # Calculate price change
+            # Add daily context for gap analysis and daily levels
+            if daily_bars and len(daily_bars) >= 1:
+                today_daily = daily_bars[-1]  # Most recent (today)
+                market_data["today_open"] = today_daily["open"]
+                market_data["today_high"] = today_daily["high"]
+                market_data["today_low"] = today_daily["low"]
+                market_data["today_volume"] = today_daily["volume"]
+
+                if len(daily_bars) >= 2:
+                    yesterday = daily_bars[-2]
+                    market_data["prev_close"] = yesterday["close"]
+                    market_data["prev_high"] = yesterday["high"]
+                    market_data["prev_low"] = yesterday["low"]
+
+                    # Calculate gap from previous close
+                    gap = today_daily["open"] - yesterday["close"]
+                    gap_percent = (gap / yesterday["close"]) * 100
+                    market_data["gap"] = gap
+                    market_data["gap_percent"] = gap_percent
+
+                    # Daily change from previous close
+                    daily_change = current_price - yesterday["close"]
+                    daily_change_percent = (daily_change / yesterday["close"]) * 100
+                    market_data["daily_change"] = daily_change
+                    market_data["daily_change_percent"] = daily_change_percent
+
+            # Calculate intraday price change (from session data)
             if len(df) > 0:
-                open_price = df.iloc[0]["open"]
-                change = current_price - open_price
-                change_percent = (change / open_price) * 100
+                session_open = df.iloc[0]["open"]
+                intraday_change = current_price - session_open
+                intraday_change_percent = (intraday_change / session_open) * 100
 
-                market_data["open_price"] = open_price
-                market_data["change"] = change
-                market_data["change_percent"] = change_percent
-                market_data["volume"] = int(df["volume"].sum())
+                market_data["session_open"] = session_open
+                market_data["intraday_change"] = intraday_change
+                market_data["intraday_change_percent"] = intraday_change_percent
+                market_data["intraday_volume"] = int(df["volume"].sum())
+                market_data["intraday_high"] = df["high"].max()
+                market_data["intraday_low"] = df["low"].min()
 
-            # Add technical indicators
+            # Add technical indicators (all calculated on intraday data)
             if include_technicals and len(df) > 0:
-                market_data["technical_indicators"] = self._calculate_technicals(df)
+                market_data["technical_indicators"] = self._calculate_technicals(df, current_price)
 
             # Add news
             if include_news:
@@ -115,128 +161,230 @@ class MarketAnalyzer:
             logger.error(f"Error fetching market data for {symbol}: {e}")
             return None
 
-    def _calculate_technicals(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def _calculate_technicals(self, df: pd.DataFrame, current_price: float = None) -> Dict[str, Any]:
         """
-        Calculate technical indicators
+        Calculate INTRADAY technical indicators from 1-minute bars.
+
+        IMPORTANT: All indicators are calculated on 1-minute intraday data.
+        The naming convention makes this explicit (e.g., "SMA_20min" not "SMA_20").
 
         Args:
-            df: DataFrame with OHLCV data
+            df: DataFrame with 1-minute OHLCV data
+            current_price: Current price from quote (more accurate than last bar close)
 
         Returns:
-            Dictionary of technical indicators
+            Dictionary of intraday technical indicators
         """
         indicators = {}
 
+        # Use provided current price or fall back to last close
+        if current_price is None:
+            current_price = df["close"].iloc[-1]
+
         try:
-            # Simple Moving Averages
+            # ============================================================
+            # INTRADAY MOVING AVERAGES (calculated on 1-minute bars)
+            # ============================================================
+            # SMA_9min = 9-minute simple moving average (very short-term)
+            if len(df) >= 9:
+                indicators["SMA_9min"] = round(df["close"].rolling(window=9).mean().iloc[-1], 2)
+
+            # SMA_20min = 20-minute simple moving average (short-term trend)
             if len(df) >= 20:
-                indicators["SMA_20"] = round(df["close"].rolling(window=20).mean().iloc[-1], 2)
+                indicators["SMA_20min"] = round(df["close"].rolling(window=20).mean().iloc[-1], 2)
 
-            if len(df) >= 50:
-                indicators["SMA_50"] = round(df["close"].rolling(window=50).mean().iloc[-1], 2)
+            # EMA_9min = 9-minute exponential moving average (fast)
+            if len(df) >= 9:
+                indicators["EMA_9min"] = round(df["close"].ewm(span=9, adjust=False).mean().iloc[-1], 2)
 
-            # Exponential Moving Averages
-            if len(df) >= 12:
-                indicators["EMA_12"] = round(df["close"].ewm(span=12, adjust=False).mean().iloc[-1], 2)
+            # EMA_21min = 21-minute exponential moving average (popular for scalping)
+            if len(df) >= 21:
+                indicators["EMA_21min"] = round(df["close"].ewm(span=21, adjust=False).mean().iloc[-1], 2)
 
-            if len(df) >= 26:
-                indicators["EMA_26"] = round(df["close"].ewm(span=26, adjust=False).mean().iloc[-1], 2)
+            # ============================================================
+            # VWAP - THE MOST IMPORTANT DAY TRADING INDICATOR
+            # ============================================================
+            if len(df) >= 1 and df["volume"].sum() > 0:
+                vwap = (df["close"] * df["volume"]).sum() / df["volume"].sum()
+                indicators["VWAP"] = round(vwap, 2)
 
-            # RSI (Relative Strength Index)
+                # VWAP position - critical for day trading
+                vwap_distance = current_price - vwap
+                vwap_distance_percent = (vwap_distance / vwap) * 100
+                indicators["VWAP_distance"] = round(vwap_distance, 2)
+                indicators["VWAP_distance_percent"] = round(vwap_distance_percent, 2)
+
+                if vwap_distance_percent > 0.5:
+                    indicators["VWAP_position"] = "Above VWAP (Bullish)"
+                elif vwap_distance_percent < -0.5:
+                    indicators["VWAP_position"] = "Below VWAP (Bearish)"
+                else:
+                    indicators["VWAP_position"] = "At VWAP (Neutral)"
+
+            # ============================================================
+            # INTRADAY MOMENTUM INDICATORS
+            # ============================================================
+            # RSI on 14 1-minute bars (very responsive for day trading)
             if len(df) >= 14:
-                indicators["RSI_14"] = round(self._calculate_rsi(df["close"], 14), 2)
+                rsi = self._calculate_rsi(df["close"], 14)
+                indicators["RSI_14min"] = round(rsi, 2)
 
-            # MACD
+                # RSI interpretation for day trading
+                if rsi > 70:
+                    indicators["RSI_signal"] = "Overbought (sell opportunity)"
+                elif rsi < 30:
+                    indicators["RSI_signal"] = "Oversold (buy opportunity)"
+                elif rsi > 60:
+                    indicators["RSI_signal"] = "Bullish momentum"
+                elif rsi < 40:
+                    indicators["RSI_signal"] = "Bearish momentum"
+                else:
+                    indicators["RSI_signal"] = "Neutral"
+
+            # MACD on 1-minute bars (12/26/9 periods = 12min/26min/9min)
             if len(df) >= 26:
                 macd_data = self._calculate_macd(df["close"])
-                indicators["MACD"] = round(macd_data["macd"], 2)
-                indicators["MACD_signal"] = round(macd_data["signal"], 2)
-                indicators["MACD_histogram"] = round(macd_data["histogram"], 2)
+                indicators["MACD"] = round(macd_data["macd"], 4)
+                indicators["MACD_signal"] = round(macd_data["signal"], 4)
+                indicators["MACD_histogram"] = round(macd_data["histogram"], 4)
 
-            # Bollinger Bands
+                # MACD crossover signal
+                if macd_data["histogram"] > 0 and macd_data["macd"] > macd_data["signal"]:
+                    indicators["MACD_trend"] = "Bullish (MACD above signal)"
+                elif macd_data["histogram"] < 0 and macd_data["macd"] < macd_data["signal"]:
+                    indicators["MACD_trend"] = "Bearish (MACD below signal)"
+                else:
+                    indicators["MACD_trend"] = "Neutral"
+
+            # Short-term momentum (5-minute price change)
+            if len(df) >= 5:
+                momentum_5 = current_price - df["close"].iloc[-5]
+                indicators["momentum_5min"] = round(momentum_5, 2)
+                indicators["momentum_5min_percent"] = round((momentum_5 / df["close"].iloc[-5]) * 100, 2)
+
+            # Medium-term momentum (15-minute price change)
+            if len(df) >= 15:
+                momentum_15 = current_price - df["close"].iloc[-15]
+                indicators["momentum_15min"] = round(momentum_15, 2)
+                indicators["momentum_15min_percent"] = round((momentum_15 / df["close"].iloc[-15]) * 100, 2)
+
+            # ============================================================
+            # INTRADAY VOLATILITY
+            # ============================================================
+            # Bollinger Bands (20-minute)
             if len(df) >= 20:
                 bb = self._calculate_bollinger_bands(df["close"], 20)
                 indicators["BB_upper"] = round(bb["upper"], 2)
                 indicators["BB_middle"] = round(bb["middle"], 2)
                 indicators["BB_lower"] = round(bb["lower"], 2)
 
-            # Volume analysis
+                # Bollinger Band position
+                bb_range = bb["upper"] - bb["lower"]
+                if bb_range > 0:
+                    bb_position = (current_price - bb["lower"]) / bb_range
+                    indicators["BB_position"] = round(bb_position * 100, 1)  # 0-100 scale
+
+                    if current_price > bb["upper"]:
+                        indicators["BB_signal"] = "Above upper band (overbought)"
+                    elif current_price < bb["lower"]:
+                        indicators["BB_signal"] = "Below lower band (oversold)"
+                    elif bb_position > 0.8:
+                        indicators["BB_signal"] = "Near upper band"
+                    elif bb_position < 0.2:
+                        indicators["BB_signal"] = "Near lower band"
+                    else:
+                        indicators["BB_signal"] = "Middle of bands"
+
+            # ATR (Average True Range) - 14-minute for day trading volatility
+            if len(df) >= 14:
+                atr = self._calculate_atr(df, 14)
+                indicators["ATR_14min"] = round(atr, 2)
+                indicators["ATR_percent"] = round((atr / current_price) * 100, 3)
+
+            # ============================================================
+            # INTRADAY VOLUME ANALYSIS
+            # ============================================================
             if len(df) >= 20:
                 avg_volume = df["volume"].rolling(window=20).mean().iloc[-1]
                 current_volume = df["volume"].iloc[-1]
                 indicators["volume_ratio"] = round(current_volume / avg_volume, 2) if avg_volume > 0 else 1.0
 
-            # Price momentum
-            if len(df) >= 10:
-                momentum = df["close"].iloc[-1] - df["close"].iloc[-10]
-                indicators["momentum_10"] = round(momentum, 2)
-
-            # VWAP (Volume-Weighted Average Price)
-            if len(df) >= 1 and df["volume"].sum() > 0:
-                vwap = (df["close"] * df["volume"]).sum() / df["volume"].sum()
-                indicators["VWAP"] = round(vwap, 2)
-
-                # VWAP position relative to current price
-                current_price = df["close"].iloc[-1]
-                indicators["VWAP_position"] = round(((current_price - vwap) / vwap) * 100, 2)
-
-            # ATR (Average True Range) - Volatility measure
-            if len(df) >= 14:
-                atr = self._calculate_atr(df, 14)
-                indicators["ATR_14"] = round(atr, 2)
-
-                # ATR as % of price (normalized volatility)
-                current_price = df["close"].iloc[-1]
-                if current_price > 0:
-                    indicators["ATR_percent"] = round((atr / current_price) * 100, 2)
-
-            # Stochastic Oscillator
-            if len(df) >= 14:
-                stoch = self._calculate_stochastic(df, 14, 3)
-                indicators["STOCH_K"] = round(stoch["k"], 2)
-                indicators["STOCH_D"] = round(stoch["d"], 2)
-
-                # Overbought/Oversold status
-                if stoch["k"] > 80:
-                    indicators["STOCH_signal"] = "Overbought"
-                elif stoch["k"] < 20:
-                    indicators["STOCH_signal"] = "Oversold"
+                # Volume trend
+                if indicators["volume_ratio"] > 2.0:
+                    indicators["volume_signal"] = "Very High (2x+ average)"
+                elif indicators["volume_ratio"] > 1.5:
+                    indicators["volume_signal"] = "High (1.5x average)"
+                elif indicators["volume_ratio"] < 0.5:
+                    indicators["volume_signal"] = "Low (below 0.5x average)"
                 else:
-                    indicators["STOCH_signal"] = "Neutral"
+                    indicators["volume_signal"] = "Normal"
 
-            # OBV (On-Balance Volume) - Volume flow indicator
+            # OBV (On-Balance Volume) trend
             if len(df) >= 10:
                 obv = self._calculate_obv(df)
                 indicators["OBV"] = int(obv)
 
-                # OBV trend (10-period change)
+                # Compare OBV trend to price trend
                 if len(df) >= 20:
                     price_change_10 = df["close"].diff().tail(10)
                     direction_10 = np.sign(price_change_10)
                     obv_10_ago = (direction_10 * df["volume"].tail(10)).fillna(0).cumsum().iloc[0]
                     obv_change = obv - obv_10_ago
-                    indicators["OBV_trend"] = "Rising" if obv_change > 0 else "Falling"
+                    indicators["OBV_trend"] = "Rising (accumulation)" if obv_change > 0 else "Falling (distribution)"
 
-            # Pivot Points (Support/Resistance levels)
-            if len(df) >= 2:
-                pivots = self._calculate_pivot_points(df)
-                current_price = df["close"].iloc[-1]
+            # ============================================================
+            # STOCHASTIC OSCILLATOR (14-minute for day trading)
+            # ============================================================
+            if len(df) >= 14:
+                stoch = self._calculate_stochastic(df, 14, 3)
+                indicators["STOCH_K"] = round(stoch["k"], 2)
+                indicators["STOCH_D"] = round(stoch["d"], 2)
 
-                indicators["PIVOT"] = round(pivots["pivot"], 2)
-                indicators["PIVOT_R1"] = round(pivots["resistance_1"], 2)
-                indicators["PIVOT_S1"] = round(pivots["support_1"], 2)
-                indicators["PIVOT_R2"] = round(pivots["resistance_2"], 2)
-                indicators["PIVOT_S2"] = round(pivots["support_2"], 2)
-
-                # Identify current position
-                if current_price > pivots["resistance_1"]:
-                    indicators["PIVOT_position"] = "Above R1 (Strong)"
-                elif current_price > pivots["pivot"]:
-                    indicators["PIVOT_position"] = "Above Pivot"
-                elif current_price > pivots["support_1"]:
-                    indicators["PIVOT_position"] = "Below Pivot"
+                # Stochastic signal for day trading
+                if stoch["k"] > 80:
+                    if stoch["k"] < stoch["d"]:
+                        indicators["STOCH_signal"] = "Overbought + Bearish crossover (SELL)"
+                    else:
+                        indicators["STOCH_signal"] = "Overbought (potential reversal)"
+                elif stoch["k"] < 20:
+                    if stoch["k"] > stoch["d"]:
+                        indicators["STOCH_signal"] = "Oversold + Bullish crossover (BUY)"
+                    else:
+                        indicators["STOCH_signal"] = "Oversold (potential reversal)"
                 else:
-                    indicators["PIVOT_position"] = "Below S1 (Weak)"
+                    indicators["STOCH_signal"] = "Neutral"
+
+            # ============================================================
+            # INTRADAY SUPPORT/RESISTANCE (from recent price action)
+            # ============================================================
+            if len(df) >= 30:
+                # Calculate intraday pivot from recent bars (not daily data)
+                recent_high = df["high"].tail(30).max()
+                recent_low = df["low"].tail(30).min()
+                recent_close = df["close"].iloc[-1]
+
+                pivot = (recent_high + recent_low + recent_close) / 3
+                r1 = (2 * pivot) - recent_low
+                s1 = (2 * pivot) - recent_high
+                r2 = pivot + (recent_high - recent_low)
+                s2 = pivot - (recent_high - recent_low)
+
+                indicators["intraday_pivot"] = round(pivot, 2)
+                indicators["intraday_R1"] = round(r1, 2)
+                indicators["intraday_S1"] = round(s1, 2)
+                indicators["intraday_R2"] = round(r2, 2)
+                indicators["intraday_S2"] = round(s2, 2)
+                indicators["intraday_range"] = round(recent_high - recent_low, 2)
+
+                # Position relative to pivot
+                if current_price > r1:
+                    indicators["pivot_position"] = "Above R1 (strong bullish)"
+                elif current_price > pivot:
+                    indicators["pivot_position"] = "Above pivot (bullish)"
+                elif current_price > s1:
+                    indicators["pivot_position"] = "Below pivot (bearish)"
+                else:
+                    indicators["pivot_position"] = "Below S1 (strong bearish)"
 
         except Exception as e:
             logger.error(f"Error calculating technical indicators: {e}")
@@ -356,44 +504,6 @@ class MarketAnalyzer:
         obv = (direction * df["volume"]).fillna(0).cumsum()
 
         return obv.iloc[-1]
-
-    def _calculate_pivot_points(self, df: pd.DataFrame) -> Dict[str, float]:
-        """
-        Calculate Pivot Points (Standard Method)
-
-        Uses previous period's high, low, close to calculate support/resistance
-
-        Args:
-            df: DataFrame with OHLC data
-
-        Returns:
-            Dictionary with pivot levels
-        """
-        # Use previous bar's data
-        high = df["high"].iloc[-2] if len(df) >= 2 else df["high"].iloc[-1]
-        low = df["low"].iloc[-2] if len(df) >= 2 else df["low"].iloc[-1]
-        close = df["close"].iloc[-2] if len(df) >= 2 else df["close"].iloc[-1]
-
-        # Pivot Point
-        pivot = (high + low + close) / 3
-
-        # Support and Resistance levels
-        r1 = (2 * pivot) - low
-        s1 = (2 * pivot) - high
-        r2 = pivot + (high - low)
-        s2 = pivot - (high - low)
-        r3 = high + 2 * (pivot - low)
-        s3 = low - 2 * (high - pivot)
-
-        return {
-            "pivot": pivot,
-            "resistance_1": r1,
-            "resistance_2": r2,
-            "resistance_3": r3,
-            "support_1": s1,
-            "support_2": s2,
-            "support_3": s3
-        }
 
     def _fetch_news(self, symbol: str, max_items: int = 5) -> List[str]:
         """
