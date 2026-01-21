@@ -91,9 +91,8 @@ KEY DAY TRADING INDICATORS TO PRIORITIZE:
 Your analysis should be:
 1. INTRADAY FOCUSED - trades expected to close today
 2. Data-driven using the minute-level indicators provided
-3. Conservative with tight stop-losses (day trading requires discipline)
-4. Specific about entry/exit points based on intraday levels
-5. Reference VWAP, intraday pivots, and short-term momentum
+3. Conservative (day trading requires discipline)
+4. Reference VWAP, intraday pivots, and short-term momentum
 
 SIGNAL TYPES:
 - BUY: Open a new long position (expecting price to rise) OR add to existing long position
@@ -114,22 +113,12 @@ CRITICAL - Your "reasoning" MUST reference INTRADAY data:
 
 Your reasoning should be 3-5 sentences citing specific INTRADAY indicator values.
 
-REQUIRED: For BUY/SELL signals, calculate stop_loss and take_profit using INTRADAY levels:
-- Use intraday pivot points (S1, S2, R1, R2) as targets/stops
-- Use VWAP as a key level
-- Use Bollinger Bands for volatility-based levels
-- Use ATR_14min for appropriate stop distances
-- Intraday high/low as reference points
-- NEVER leave stop_loss or take_profit as null
-
 Format your response as JSON:
 {
   "signal": "BUY" | "SELL" | "HOLD",
   "confidence": 0-100,
   "reasoning": "Detailed explanation citing INTRADAY indicators (VWAP, RSI_14min, momentum_5min, intraday pivots, etc). 3-5 sentences required.",
-  "entry_price": <number - REQUIRED for BUY/SELL>,
-  "stop_loss": <number - REQUIRED, based on intraday S/R levels or ATR>,
-  "take_profit": <number - REQUIRED, based on intraday S/R levels>,
+  "entry_price": <number - current market price for entry>,
   "position_size_recommendation": "SMALL" | "MEDIUM" | "LARGE",
   "risk_factors": ["list", "of", "intraday", "risks"],
   "time_horizon": "X minutes" or "X hours" (must be INTRADAY)

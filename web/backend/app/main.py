@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(project_root, 'src'))
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 import asyncio
 import logging
 from typing import Dict, List, Optional
@@ -403,110 +403,25 @@ class TradingState:
                         logger.warning(f"TRADE BLOCKED [{signal.symbol}]: {reason}")
                         return False, reason, 0, current_price, None
 
-                    # Determine stop-loss and take-profit prices
-                    # Use AI-provided prices if available, otherwise calculate from settings
-                    stop_loss_price = None
-                    take_profit_price = None
-
-                    # Only set protective orders for NEW positions (not for closing positions)
+                    # Check if we're closing a position
                     is_closing_position = (
                         (side == "buy" and position_side == "short") or
                         (side == "sell" and position_side == "long")
                     )
 
-                    # When closing a position, capture the realized P&L and cancel any existing orders
+                    # When closing a position, capture the realized P&L
                     if is_closing_position and existing_position:
                         # Capture realized P&L from the position we're about to close
                         realized_pnl = existing_position.pnl
                         logger.info(f"Closing position for {signal.symbol} - Realized P&L: ${realized_pnl:.2f}")
 
-                        # Cancel any existing orders (e.g., stop-loss and take-profit legs from bracket orders)
-                        cancelled = self.broker.cancel_orders_for_symbol(signal.symbol)
-                        if cancelled > 0:
-                            logger.info(f"Cancelled {cancelled} existing orders for {signal.symbol} before closing position")
-                            # Small delay to ensure orders are cancelled before placing new order
-                            import time
-                            time.sleep(0.5)
-
-                    if not is_closing_position:
-                        # Minimum buffer from current price (Alpaca requires at least $0.01)
-                        # We use 0.5% or $0.05 minimum to account for price movement between validation and order
-                        min_buffer = max(0.05, current_price * 0.005)
-
-                        # Use AI-provided prices first, but validate they make sense
-                        if signal.stop_loss:
-                            # Validate stop-loss is on correct side of price WITH buffer
-                            if side == "buy" and signal.stop_loss < (current_price - min_buffer):
-                                stop_loss_price = signal.stop_loss
-                            elif side == "sell" and signal.stop_loss > (current_price + min_buffer):
-                                stop_loss_price = signal.stop_loss
-                            else:
-                                logger.warning(f"AI stop-loss ${signal.stop_loss:.2f} is too close to price ${current_price:.2f} for {side.upper()}, using settings")
-                                # Fall through to calculate from settings
-
-                        # If no valid AI stop-loss, calculate from settings
-                        if stop_loss_price is None and self.settings.stop_loss_percentage > 0:
-                            if side == "buy":
-                                stop_loss_price = round(current_price * (1 - self.settings.stop_loss_percentage / 100), 2)
-                            else:  # short position
-                                stop_loss_price = round(current_price * (1 + self.settings.stop_loss_percentage / 100), 2)
-
-                        if signal.take_profit:
-                            # Validate take-profit is on correct side of price WITH buffer
-                            if side == "buy" and signal.take_profit > (current_price + min_buffer):
-                                take_profit_price = signal.take_profit
-                            elif side == "sell" and signal.take_profit < (current_price - min_buffer):
-                                take_profit_price = signal.take_profit
-                            else:
-                                logger.warning(f"AI take-profit ${signal.take_profit:.2f} is too close to price ${current_price:.2f} for {side.upper()}, using settings")
-                                # Fall through to calculate from settings
-
-                        # If no valid AI take-profit, calculate from settings
-                        if take_profit_price is None and self.settings.take_profit_percentage > 0:
-                            if side == "buy":
-                                take_profit_price = round(current_price * (1 + self.settings.take_profit_percentage / 100), 2)
-                            else:  # short position
-                                take_profit_price = round(current_price * (1 - self.settings.take_profit_percentage / 100), 2)
-
-                    # Final validation: ensure stop-loss meets Alpaca's requirements
-                    # Alpaca requires stop_loss to be at least $0.01 away from current price
-                    if stop_loss_price:
-                        if side == "buy" and stop_loss_price >= (current_price - 0.01):
-                            logger.warning(f"Stop-loss ${stop_loss_price:.2f} too close to price ${current_price:.2f}, recalculating")
-                            stop_loss_price = round(current_price * 0.98, 2)  # Force 2% below
-                        elif side == "sell" and stop_loss_price <= (current_price + 0.01):
-                            logger.warning(f"Stop-loss ${stop_loss_price:.2f} too close to price ${current_price:.2f}, recalculating")
-                            stop_loss_price = round(current_price * 1.02, 2)  # Force 2% above
-
-                    if take_profit_price:
-                        if side == "buy" and take_profit_price <= (current_price + 0.01):
-                            logger.warning(f"Take-profit ${take_profit_price:.2f} too close to price ${current_price:.2f}, recalculating")
-                            take_profit_price = round(current_price * 1.05, 2)  # Force 5% above
-                        elif side == "sell" and take_profit_price >= (current_price - 0.01):
-                            logger.warning(f"Take-profit ${take_profit_price:.2f} too close to price ${current_price:.2f}, recalculating")
-                            take_profit_price = round(current_price * 0.95, 2)  # Force 5% below
-
-                    # Place order (bracket if protective orders, simple market otherwise)
-                    if stop_loss_price or take_profit_price:
-                        order = self.broker.place_bracket_order(
-                            symbol=signal.symbol,
-                            quantity=final_quantity,
-                            side=side,
-                            take_profit_price=take_profit_price,
-                            stop_loss_price=stop_loss_price
-                        )
-                        order_desc = f"BRACKET {side.upper()} {final_quantity} shares @ ${current_price:.2f}"
-                        if stop_loss_price:
-                            order_desc += f" | SL: ${stop_loss_price:.2f}"
-                        if take_profit_price:
-                            order_desc += f" | TP: ${take_profit_price:.2f}"
-                    else:
-                        order = self.broker.place_market_order(
-                            symbol=signal.symbol,
-                            quantity=final_quantity,
-                            side=side
-                        )
-                        order_desc = f"{side.upper()} {final_quantity} shares @ ${current_price:.2f}"
+                    # Always use simple market orders (no stop-loss or take-profit)
+                    order = self.broker.place_market_order(
+                        symbol=signal.symbol,
+                        quantity=final_quantity,
+                        side=side
+                    )
+                    order_desc = f"{side.upper()} {final_quantity} shares @ ${current_price:.2f}"
 
                     # Record trade
                     self.portfolio.record_trade(
@@ -784,6 +699,7 @@ async def get_settings():
         # Bot scheduling
         "scan_interval_minutes": state.settings.scan_interval_minutes,
         "min_confidence_threshold": state.settings.min_confidence_threshold,
+        "close_positions_at_session_end": state.settings.close_positions_at_session_end,
         # Include API keys (masked for security, empty string means not configured)
         "alpaca_api_key": _mask_api_key(state.settings.alpaca_api_key),
         "alpaca_secret_key": _mask_api_key(state.settings.alpaca_secret_key),
@@ -834,6 +750,7 @@ async def update_settings(updated_settings: dict):
                     'default_llm_provider': 'DEFAULT_LLM_PROVIDER',
                     'scan_interval_minutes': 'SCAN_INTERVAL_MINUTES',
                     'min_confidence_threshold': 'MIN_CONFIDENCE_THRESHOLD',
+                    'close_positions_at_session_end': 'CLOSE_POSITIONS_AT_SESSION_END',
                     'alpaca_api_key': 'ALPACA_API_KEY',
                     'alpaca_secret_key': 'ALPACA_SECRET_KEY',
                     'anthropic_api_key': 'ANTHROPIC_API_KEY',
@@ -884,6 +801,7 @@ async def update_settings(updated_settings: dict):
             'default_llm_provider': 'DEFAULT_LLM_PROVIDER',
             'scan_interval_minutes': 'SCAN_INTERVAL_MINUTES',
             'min_confidence_threshold': 'MIN_CONFIDENCE_THRESHOLD',
+            'close_positions_at_session_end': 'CLOSE_POSITIONS_AT_SESSION_END',
             'alpaca_api_key': 'ALPACA_API_KEY',
             'alpaca_secret_key': 'ALPACA_SECRET_KEY',
             'anthropic_api_key': 'ANTHROPIC_API_KEY',
@@ -956,12 +874,71 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
                     # Market just opened - capture market open snapshot
                     logger.info("Market opened - capturing market open snapshot")
                     state.report_manager.capture_snapshot("market_open")
+                    # Reset the positions closed flag for new trading day
+                    state._positions_closed_today = False
                 elif state._previous_market_open and not market_is_open:
                     # Market just closed - capture market close snapshot
                     logger.info("Market closed - capturing market close snapshot")
                     state.report_manager.capture_snapshot("market_close")
 
             state._previous_market_open = market_is_open
+
+            # Check if we should close positions near end of session
+            # Close positions if this is the last scan before market close
+            # (i.e., there won't be another full scan interval before market closes)
+            if market_is_open and state.settings.close_positions_at_session_end:
+                minutes_until_close = state.trading_bot.broker.get_minutes_until_close()
+                scan_interval = state.settings.scan_interval_minutes
+
+                # Close if time remaining is less than the scan interval
+                # This ensures we close on the last possible scan while market is still open
+                if minutes_until_close is not None and minutes_until_close <= scan_interval:
+                    # Check if we haven't already closed positions this session
+                    if not getattr(state, '_positions_closed_today', False):
+                        logger.info(f"Market closing in {minutes_until_close} minutes (scan interval: {scan_interval}m) - this is the last scan, closing all positions")
+                        await manager.broadcast({
+                            "type": "session_closing",
+                            "message": f"Market closing in {minutes_until_close} minutes - closing all positions on final scan",
+                            "minutes_remaining": minutes_until_close,
+                            "scan_interval": scan_interval,
+                            "timestamp": datetime.now().isoformat()
+                        })
+
+                        try:
+                            results = state.trading_bot.broker.close_all_positions()
+                            state._positions_closed_today = True
+
+                            # Calculate total P&L from closed positions
+                            total_pnl = sum(r.get("pnl", 0) for r in results if r.get("status") == "closed")
+                            closed_count = len([r for r in results if r.get("status") == "closed"])
+
+                            await manager.broadcast({
+                                "type": "positions_closed",
+                                "message": f"Closed {closed_count} positions at end of session",
+                                "total_pnl": total_pnl,
+                                "results": results,
+                                "timestamp": datetime.now().isoformat()
+                            })
+
+                            logger.info(f"End of session: Closed {closed_count} positions, Total P&L: ${total_pnl:.2f}")
+                        except Exception as e:
+                            logger.error(f"Error closing positions at session end: {e}")
+                            await manager.broadcast({
+                                "type": "error",
+                                "message": f"Error closing positions: {str(e)}",
+                                "timestamp": datetime.now().isoformat()
+                            })
+
+                        # Stop the bot after closing positions at end of session
+                        logger.info("End of session - stopping bot. Restart manually tomorrow.")
+                        state.bot_running = False
+                        await manager.broadcast({
+                            "type": "bot_status",
+                            "running": False,
+                            "message": "Bot stopped after closing all positions at end of session. Restart manually tomorrow.",
+                            "timestamp": datetime.now().isoformat()
+                        })
+                        return  # Exit the trading loop
 
             if not market_is_open:
                 logger.info("Market is closed - waiting 60 seconds before checking again")
@@ -1571,6 +1548,37 @@ async def capture_snapshot(body: dict = None):
         }
     except Exception as e:
         logger.error(f"Error capturing snapshot: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/reports/{date}/pdf")
+async def download_report_pdf(date: str):
+    """Download a daily report as a PDF file"""
+    from io import BytesIO
+
+    # Validate date format
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    try:
+        pdf_bytes = state.report_manager.generate_pdf(date)
+        if not pdf_bytes:
+            raise HTTPException(status_code=404, detail=f"No report found for {date}")
+
+        # Return as downloadable PDF
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=trading_report_{date}.pdf"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating PDF for {date}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
