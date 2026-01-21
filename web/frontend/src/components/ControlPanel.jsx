@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { PlayIcon, StopIcon, Cog6ToothIcon, ClockIcon } from '@heroicons/react/24/solid';
+import { PlayIcon, StopIcon, Cog6ToothIcon, ClockIcon, CpuChipIcon } from '@heroicons/react/24/solid';
+import {
+  ChartBarIcon,
+  ArrowTrendingUpIcon,
+  ArrowTrendingDownIcon,
+  BoltIcon,
+  SignalIcon,
+} from '@heroicons/react/24/outline';
+import apiClient from '../utils/api';
+import { formatCurrency } from '../utils/formatters';
 
 const ControlPanel = ({
   botRunning,
@@ -10,20 +19,24 @@ const ControlPanel = ({
   configured = true,
   initialized = true,
   scanIntervalMinutes = 5,
-  lastScanTime = null
+  lastScanTime = null,
+  botStartTime = null,
+  updateBotStartTime = () => {},
+  resetBotState = () => {}
 }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [countdown, setCountdown] = useState(null);
-  const [botStartTime, setBotStartTime] = useState(null);
+  const [todayStats, setTodayStats] = useState(null);
   const countdownRef = useRef(null);
+  const statsRef = useRef(null);
 
   // Calculate and update countdown
   useEffect(() => {
     if (botRunning && scanIntervalMinutes > 0) {
-      // If bot just started, set start time
+      // If bot just started and we don't have a start time, set it
       if (!botStartTime) {
-        setBotStartTime(Date.now());
+        updateBotStartTime(Date.now());
       }
 
       const updateCountdown = () => {
@@ -54,21 +67,48 @@ const ControlPanel = ({
         }
       };
     } else {
-      // Bot stopped, clear countdown
+      // Bot stopped, clear countdown (context state is managed by Dashboard)
       setCountdown(null);
-      setBotStartTime(null);
       if (countdownRef.current) {
         clearInterval(countdownRef.current);
       }
     }
-  }, [botRunning, scanIntervalMinutes, botStartTime, lastScanTime]);
+  }, [botRunning, scanIntervalMinutes, botStartTime, lastScanTime, updateBotStartTime]);
+
+  // Fetch today's stats for the metrics display
+  useEffect(() => {
+    const fetchTodayStats = async () => {
+      try {
+        const response = await apiClient.getTodayReport();
+        if (response.report) {
+          setTodayStats(response.report);
+        }
+      } catch (err) {
+        // Silently fail - stats are optional
+        console.debug('Could not fetch today stats:', err.message);
+      }
+    };
+
+    // Fetch immediately
+    fetchTodayStats();
+
+    // Refresh every 30 seconds when bot is running
+    if (botRunning) {
+      statsRef.current = setInterval(fetchTodayStats, 30000);
+      return () => {
+        if (statsRef.current) {
+          clearInterval(statsRef.current);
+        }
+      };
+    }
+  }, [botRunning, lastScanTime]); // Refresh when lastScanTime changes (new scan completed)
 
   const handleStart = async () => {
     setLoading(true);
     setError(null);
     try {
       await onStart();
-      setBotStartTime(Date.now());
+      updateBotStartTime(Date.now());
     } catch (err) {
       console.error('Error starting bot:', err);
       setError(err.response?.data?.detail || 'Failed to start bot');
@@ -81,7 +121,7 @@ const ControlPanel = ({
     setLoading(true);
     try {
       await onStop();
-      setBotStartTime(null);
+      resetBotState();
       setCountdown(null);
     } catch (error) {
       console.error('Error stopping bot:', error);
@@ -100,7 +140,10 @@ const ControlPanel = ({
 
   return (
     <div className="bg-slate-800 rounded-lg p-6 shadow-lg border border-slate-700">
-      <h2 className="text-xl font-semibold text-white mb-4">Bot Control</h2>
+      <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
+        <CpuChipIcon className="h-6 w-6 mr-2 text-purple-400" />
+        Trading Engine
+      </h2>
 
       <div className="space-y-4">
         {/* Status indicator */}
@@ -152,6 +195,73 @@ const ControlPanel = ({
           </div>
         )}
 
+        {/* Today's Performance Metrics - Always show */}
+        <div className="bg-slate-700/50 rounded-lg p-4 mt-4">
+          <div className="flex items-center mb-3">
+            <ChartBarIcon className="h-5 w-5 text-blue-400 mr-2" />
+            <span className="text-sm font-medium text-slate-300">Today's Performance</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {/* Daily P&L */}
+            <div className="bg-slate-800/50 rounded-lg p-3">
+              <div className="text-xs text-slate-500 mb-1">Daily P&L</div>
+              <div className={`text-lg font-bold ${
+                (todayStats?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+              }`}>
+                {formatCurrency(todayStats?.total_pnl || 0)}
+              </div>
+            </div>
+
+            {/* Trades Executed */}
+            <div className="bg-slate-800/50 rounded-lg p-3">
+              <div className="text-xs text-slate-500 mb-1">Trades Today</div>
+              <div className="text-lg font-bold text-white">
+                {todayStats?.trades?.length || 0}
+              </div>
+            </div>
+
+            {/* Signals Analyzed */}
+            <div className="bg-slate-800/50 rounded-lg p-3">
+              <div className="text-xs text-slate-500 mb-1">Signals Analyzed</div>
+              <div className="flex items-center">
+                <SignalIcon className="h-4 w-4 text-yellow-400 mr-1" />
+                <span className="text-lg font-bold text-white">
+                  {todayStats?.signals_analyzed || 0}
+                </span>
+              </div>
+            </div>
+
+            {/* Win Rate */}
+            <div className="bg-slate-800/50 rounded-lg p-3">
+              <div className="text-xs text-slate-500 mb-1">Win Rate</div>
+              <div className="flex items-center">
+                {(todayStats?.win_count || 0) >= (todayStats?.loss_count || 0) ? (
+                  <ArrowTrendingUpIcon className="h-4 w-4 text-green-400 mr-1" />
+                ) : (
+                  <ArrowTrendingDownIcon className="h-4 w-4 text-red-400 mr-1" />
+                )}
+                <span className="text-lg font-bold text-white">
+                  {(todayStats?.win_count || 0) + (todayStats?.loss_count || 0) > 0
+                    ? `${Math.round(((todayStats?.win_count || 0) / ((todayStats?.win_count || 0) + (todayStats?.loss_count || 0))) * 100)}%`
+                    : '--'}
+                </span>
+                <span className="text-xs text-slate-500 ml-1">
+                  ({todayStats?.win_count || 0}W/{todayStats?.loss_count || 0}L)
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Blocked Trades indicator */}
+          {(todayStats?.blocked_trades?.length || 0) > 0 && (
+            <div className="mt-3 text-xs text-slate-400 flex items-center justify-center">
+              <BoltIcon className="h-3 w-3 text-orange-400 mr-1" />
+              {todayStats.blocked_trades.length} trade{todayStats.blocked_trades.length !== 1 ? 's' : ''} blocked by risk rules
+            </div>
+          )}
+        </div>
+
         {/* Configuration status */}
         {!configured && (
           <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-3 mt-4">
@@ -188,7 +298,7 @@ const ControlPanel = ({
             title={!configured ? 'Please configure API keys in Settings first' : ''}
           >
             <PlayIcon className="h-5 w-5 mr-2" />
-            Start Bot
+            Start
           </button>
 
           <button
@@ -201,7 +311,7 @@ const ControlPanel = ({
             }`}
           >
             <StopIcon className="h-5 w-5 mr-2" />
-            Stop Bot
+            Stop
           </button>
         </div>
 

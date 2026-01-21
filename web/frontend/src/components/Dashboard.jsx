@@ -17,6 +17,7 @@ import PositionsTable from './PositionsTable';
 import ControlPanel from './ControlPanel';
 import ActivityFeed from './ActivityFeed';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { useAppContext } from '../context/AppContext';
 import apiClient from '../utils/api';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
@@ -24,36 +25,27 @@ const Dashboard = () => {
   const [status, setStatus] = useState(null);
   const [positions, setPositions] = useState([]);
   const [settings, setSettings] = useState(null);
-  const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [lastScanTime, setLastScanTime] = useState(null);
+
+  // Use context for persistent state across navigation
+  const {
+    activities,
+    addActivity,
+    lastScanTime,
+    updateLastScanTime,
+    botStartTime,
+    updateBotStartTime,
+    resetBotState
+  } = useAppContext();
 
   // WebSocket connection for real-time updates
   const { isConnected, lastMessage } = useWebSocket((message) => {
     console.log('WebSocket message:', message);
 
-    // Add to activity feed with deduplication
+    // Add to activity feed with deduplication (using context)
     if (message.type) {
-      setActivities(prev => {
-        // Check if this exact message already exists (within 1 second)
-        const isDuplicate = prev.some(activity =>
-          activity.type === message.type &&
-          activity.timestamp === message.timestamp &&
-          Math.abs(new Date(activity.timestamp) - new Date(message.timestamp)) < 1000
-        );
-
-        if (isDuplicate) {
-          console.log('Duplicate message detected, skipping:', message.type);
-          return prev;
-        }
-
-        return [{
-          type: message.type,
-          data: message,
-          timestamp: message.timestamp || new Date().toISOString()
-        }, ...prev].slice(0, 50); // Keep last 50 activities
-      });
+      addActivity(message);
     }
 
     // Handle real-time updates
@@ -64,15 +56,18 @@ const Dashboard = () => {
     } else if (message.type === 'bot_status') {
       // Refresh data when bot status changes
       fetchData();
-      // Reset last scan time when bot starts
+      // Update bot state when bot starts/stops
       if (message.running) {
-        setLastScanTime(message.timestamp);
+        updateLastScanTime(message.timestamp);
+        if (!botStartTime) {
+          updateBotStartTime(Date.now());
+        }
       } else {
-        setLastScanTime(null);
+        resetBotState();
       }
     } else if (message.type === 'scan_started' || message.type === 'scan_complete' || message.type === 'trading_signals') {
       // Update last scan time when a scan occurs
-      setLastScanTime(message.timestamp);
+      updateLastScanTime(message.timestamp);
     }
   });
 
@@ -247,6 +242,9 @@ const Dashboard = () => {
               initialized={initialized}
               scanIntervalMinutes={settings?.scan_interval_minutes || 5}
               lastScanTime={lastScanTime}
+              botStartTime={botStartTime}
+              updateBotStartTime={updateBotStartTime}
+              resetBotState={resetBotState}
             />
           </div>
           <div className="lg:col-span-2">
@@ -391,6 +389,13 @@ const Dashboard = () => {
                         : 'bg-slate-700 text-slate-400 border border-slate-600'
                     }`}>
                       Short Selling: {settings.enable_short_selling ? 'ON' : 'OFF'}
+                    </div>
+                    <div className={`px-3 py-1.5 rounded-full text-xs font-medium ${
+                      settings.close_positions_at_session_end
+                        ? 'bg-orange-900/30 text-orange-400 border border-orange-700'
+                        : 'bg-slate-700 text-slate-400 border border-slate-600'
+                    }`}>
+                      Close at EOD: {settings.close_positions_at_session_end ? 'ON' : 'OFF'}
                     </div>
                     <div className="px-3 py-1.5 rounded-full text-xs font-medium bg-purple-900/30 text-purple-400 border border-purple-700">
                       Scan: Every {settings.scan_interval_minutes || 5} min
