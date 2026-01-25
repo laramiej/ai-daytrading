@@ -158,6 +158,12 @@ class TradingState:
         llm_provider = LLMFactory.create_provider(provider_name, api_key)
         logger.info(f"Using LLM provider: {provider_name}")
 
+        # Auto-disable AI critique/debate for n8n provider (n8n doesn't support separate bull/bear/judge calls)
+        enable_critique = self.settings.enable_ai_critique
+        if provider_name == "n8n" and enable_critique:
+            logger.warning("AI critique/debate is not supported with n8n provider - auto-disabling")
+            enable_critique = False
+
         # Initialize market analyzer
         market_analyzer = MarketAnalyzer(
             self.broker,
@@ -190,7 +196,7 @@ class TradingState:
             llm_provider,
             market_analyzer,
             portfolio,
-            enable_critique=self.settings.enable_ai_critique
+            enable_critique=enable_critique
         )
 
         # Store components in a simple object
