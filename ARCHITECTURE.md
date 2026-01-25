@@ -22,6 +22,15 @@ The AI Day Trading System is built with a modular, extensible architecture that 
 - Easy switching between models
 - Specialized market analysis prompts
 - Token usage tracking
+- **Bull/Bear/Judge Debate System**: Three-way AI debate for balanced decisions
+
+**Bull/Bear/Judge System**:
+The LLM module implements a sophisticated debate system:
+1. **Bull Analyst**: Makes the strongest case for buying
+2. **Bear Analyst**: Makes the strongest case for selling
+3. **Impartial Judge**: Reviews both cases and makes final decision (defaults to HOLD)
+
+See [BULL_BEAR_JUDGE.md](BULL_BEAR_JUDGE.md) for complete details.
 
 **Adding New Providers**:
 ```python
@@ -123,11 +132,12 @@ class NewProvider(BaseLLMProvider):
    └─> MarketAnalyzer fetches quotes, bars, news
 
 2. Technical Analysis
-   └─> MarketAnalyzer calculates indicators
+   └─> MarketAnalyzer calculates intraday indicators
 
-3. AI Analysis
-   └─> TradingStrategy sends data to LLM
-   └─> LLM returns trading signal with reasoning
+3. AI Debate System
+   └─> Bull Analyst: Makes case for buying
+   └─> Bear Analyst: Makes case for selling
+   └─> Judge: Reviews both, makes final decision
 
 4. Risk Evaluation
    └─> RiskManager validates against limits
@@ -139,7 +149,12 @@ class NewProvider(BaseLLMProvider):
 
 6. Execution
    └─> AlpacaBroker places order
-   └─> RiskManager records trade
+   └─> DailyReportManager records trade
+
+7. Reporting
+   └─> Portfolio snapshots at market open/close
+   └─> Trade history with P&L tracking
+   └─> PDF report generation on demand
 ```
 
 ## Key Design Patterns

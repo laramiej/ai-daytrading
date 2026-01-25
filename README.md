@@ -4,11 +4,13 @@ An intelligent day trading system that uses Large Language Models (LLMs) to anal
 
 ## Features
 
+- **Bull/Bear/Judge Debate System**: Three AI perspectives debate each trade for balanced decisions (see [BULL_BEAR_JUDGE.md](BULL_BEAR_JUDGE.md))
 - **Multi-LLM Support**: Seamlessly switch between Anthropic Claude, OpenAI GPT-4, and Google Gemini
-- **Intelligent Analysis**: AI-powered market analysis using 12 technical indicators, price data, and news
+- **Intelligent Analysis**: AI-powered intraday market analysis using technical indicators, price data, and news
 - **Short Selling Support**: Profit from declining stocks with configurable short selling (see [SHORT_SELLING.md](SHORT_SELLING.md))
 - **Portfolio Awareness**: AI considers your current positions, past trades, and portfolio constraints
 - **Sentiment Analysis**: Market and stock-specific sentiment from news, analysts, and momentum
+- **Daily Reports**: Comprehensive daily trading reports with PDF export (see [PDF_REPORTS.md](PDF_REPORTS.md))
 - **Batch Trading**: Approve multiple recommendations at once for efficiency
 - **Risk Management**: Comprehensive risk controls including position limits, daily loss limits, and exposure caps
 - **Trading Modes**: Choose between manual approval or auto-trading mode (see [AUTO_TRADING.md](AUTO_TRADING.md))
@@ -16,6 +18,7 @@ An intelligent day trading system that uses Large Language Models (LLMs) to anal
 - **Auto-Trading**: Advanced mode for hands-free execution (still respects all risk limits)
 - **Paper Trading**: Safe testing environment with Alpaca paper trading
 - **Real-time Data**: Live market data and technical indicator calculations
+- **Web Dashboard**: React-based web interface for monitoring and control (see [WEB_QUICKSTART.md](WEB_QUICKSTART.md))
 - **Extensible Architecture**: Clean, modular design for easy customization
 
 ## System Architecture
@@ -364,12 +367,16 @@ Modify `src/strategy/market_analyzer.py` to:
 
 ## Additional Documentation
 
+- **[BULL_BEAR_JUDGE.md](BULL_BEAR_JUDGE.md)** - Bull/Bear/Judge AI debate system
+- **[PDF_REPORTS.md](PDF_REPORTS.md)** - Daily report PDF generation
 - **[AUTO_TRADING.md](AUTO_TRADING.md)** - Auto-trading vs manual approval modes
 - **[SHORT_SELLING.md](SHORT_SELLING.md)** - Complete guide to short selling stocks
 - **[PORTFOLIO_AWARENESS.md](PORTFOLIO_AWARENESS.md)** - Portfolio tracking and trade history
 - **[SENTIMENT_ANALYSIS.md](SENTIMENT_ANALYSIS.md)** - Market and stock sentiment features
 - **[BATCH_TRADING.md](BATCH_TRADING.md)** - Batch approval workflow guide
+- **[ENHANCED_REASONING.md](ENHANCED_REASONING.md)** - Detailed AI reasoning with data citations
 - **[LOGGING_GUIDE.md](LOGGING_GUIDE.md)** - Understanding AI analysis logs
+- **[WEB_QUICKSTART.md](WEB_QUICKSTART.md)** - Web dashboard setup guide
 - **[QUICKSTART.md](QUICKSTART.md)** - 5-minute quick start guide
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - Technical architecture details
 
