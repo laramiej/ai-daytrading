@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
     google_api_key: Optional[str] = Field(None, env="GOOGLE_API_KEY")
 
+    # n8n Workflow Integration
+    n8n_webhook_url: Optional[str] = Field(None, env="N8N_WEBHOOK_URL")
+    n8n_timeout_seconds: int = Field(120, env="N8N_TIMEOUT_SECONDS")
+
     # Trading Configuration
     default_llm_provider: str = Field("anthropic", env="DEFAULT_LLM_PROVIDER")
     max_position_size: float = Field(1000.0, env="MAX_POSITION_SIZE")
@@ -80,7 +84,8 @@ class Settings(BaseSettings):
         key_map = {
             "anthropic": self.anthropic_api_key,
             "openai": self.openai_api_key,
-            "google": self.google_api_key
+            "google": self.google_api_key,
+            "n8n": self.n8n_webhook_url,  # n8n uses webhook URL instead of API key
         }
 
         return key_map.get(provider.lower())
@@ -96,6 +101,14 @@ class Settings(BaseSettings):
             Tuple of (is_valid, error_message)
         """
         provider = provider or self.default_llm_provider
+
+        # Special validation for n8n provider
+        if provider.lower() == "n8n":
+            if not self.n8n_webhook_url:
+                return False, "n8n webhook URL not configured (N8N_WEBHOOK_URL)"
+            if not self.n8n_webhook_url.startswith("http"):
+                return False, "n8n webhook URL must start with http:// or https://"
+            return True, ""
 
         api_key = self.get_llm_api_key(provider)
 

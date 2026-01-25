@@ -1,0 +1,963 @@
+{
+  "name": "Smart stock trading recommendations - API v1",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "9403b1e2-ea88-48b1-83d3-ded37be2676f",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "position": [
+        -672,
+        464
+      ],
+      "webhookId": "1659fe58-d78d-40dc-92fa-76f3bf599df8",
+      "typeVersion": 1.3
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stock-analysis",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-api-trigger",
+      "name": "API Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        -672,
+        200
+      ],
+      "webhookId": "stock-analysis-webhook",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract symbol from webhook body\nconst symbol = ($json.body?.symbol || $json.symbol || '').trim().toUpperCase();\n\nif (!symbol || symbol.length > 5 || !/^[A-Z]+$/.test(symbol)) {\n  throw new Error(`Invalid stock symbol: ${symbol || '(empty)'}`);\n}\n\nreturn {\n  symbol: symbol,\n  originalInput: symbol,\n  isApiRequest: true\n};"
+      },
+      "id": "webhook-extract-symbol",
+      "name": "Extract Symbol from Webhook",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -400,
+        200
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "url": "https://api.twelvedata.com/time_series",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "={{ $json.symbol }}"
+            },
+            {
+              "name": "interval",
+              "value": "4h"
+            },
+            {
+              "name": "apikey",
+              "value": "3f102ecce1bf4083a937dbb7030afe32"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "49867aaa-6ab8-4cee-9d02-0e5851130d2c",
+      "name": "4h trend",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        160,
+        176
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "url": "https://api.twelvedata.com/time_series",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "={{ $json.symbol }}"
+            },
+            {
+              "name": "interval",
+              "value": "1day"
+            },
+            {
+              "name": "apikey",
+              "value": "3f102ecce1bf4083a937dbb7030afe32"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5fd93541-742d-45c6-a11d-b9b5aa3d63c0",
+      "name": "1day trend",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        160,
+        368
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "url": "https://api.twelvedata.com/time_series",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "={{ $json.symbol }}"
+            },
+            {
+              "name": "interval",
+              "value": "1week"
+            },
+            {
+              "name": "apikey",
+              "value": "3f102ecce1bf4083a937dbb7030afe32"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "57bdf7d1-4ecc-49a4-8619-9f533fef4738",
+      "name": "1week trend",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        160,
+        592
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "url": "https://api.twelvedata.com/time_series",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "SPY"
+            },
+            {
+              "name": "interval",
+              "value": "1day"
+            },
+            {
+              "name": "apikey",
+              "value": "3f102ecce1bf4083a937dbb7030afe32"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "spy-market-data-node",
+      "name": "SPY Market Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        160,
+        -16
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "url": "https://api.twelvedata.com/time_series",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "UVXY"
+            },
+            {
+              "name": "interval",
+              "value": "1day"
+            },
+            {
+              "name": "apikey",
+              "value": "3f102ecce1bf4083a937dbb7030afe32"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "vix-volatility-node",
+      "name": "VIX Volatility",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        160,
+        -208
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "url": "https://newsapi.org/v2/everything",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.symbol }}"
+            },
+            {
+              "name": "pageSize",
+              "value": "10"
+            },
+            {
+              "name": "sortBy",
+              "value": "publishedAt"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "07f1b6d1-7a18-4fc4-bc8e-d563473d0344",
+      "name": "Get News",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        160,
+        784
+      ],
+      "typeVersion": 4.2,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "eoHASyr9aPKm4qRl",
+          "name": "News API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the request body for Claude sentiment analysis\nconst articles = $json.articles || [];\nconst articlesText = articles.slice(0, 5).map(a => \n  `Title: ${a.title || 'N/A'}\\nDescription: ${a.description || 'N/A'}`\n).join('\\n\\n');\n\nconst requestBody = {\n  model: 'claude-sonnet-4-20250514',\n  max_tokens: 500,\n  system: 'You are a financial market impact analyst. Analyze news for stock price impact, not emotional tone. Score from -1.0 (Strong Sell) to +1.0 (Strong Buy). Output ONLY valid JSON: {\"category\": \"Bullish\" or \"Bearish\" or \"Neutral\", \"score\": number, \"rationale\": \"string\"}',\n  messages: [\n    {\n      role: 'user',\n      content: `Analyze these news articles for market impact on the stock price:\\n\\n${articlesText}\\n\\nRespond with only the JSON object.`\n    }\n  ]\n};\n\nreturn { requestBody: requestBody };"
+      },
+      "id": "d15b4afd-50d3-4ac9-8ecb-e8cf845887f4",
+      "name": "Build Sentiment Request",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        400,
+        784
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {}
+      },
+      "id": "3f925d4b-5a28-4fd3-af16-54d16cebd269",
+      "name": "News Sentiment Analyzer",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        640,
+        784
+      ],
+      "typeVersion": 4.2,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "eoHASyr9aPKm4qRl",
+          "name": "News API"
+        },
+        "anthropicApi": {
+          "id": "wTMqnFAChubo4ULX",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "6318d0c6-9034-41e0-8b15-77b2c5c586c4",
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.aggregate",
+      "position": [
+        608,
+        400
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "numberInputs": 5
+      },
+      "id": "a8f33a4e-af36-4866-8fa1-44c66782eeeb",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "position": [
+        448,
+        400
+      ],
+      "typeVersion": 3.2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process stock data from TwelveData with comprehensive technical analysis\nconst items = $input.all();\nlet inputData = [];\nlet spyData = null;\nlet vixData = null;\n\n// Extract the data - handle both direct items and aggregated data array\nfor (const item of items) {\n  // Check if this item has aggregated data (from Aggregate node)\n  if (item.json?.data && Array.isArray(item.json.data)) {\n    for (const dataItem of item.json.data) {\n      if (dataItem.meta && dataItem.values) {\n        const symbol = dataItem.meta.symbol;\n        if (symbol === 'SPY') {\n          spyData = dataItem;\n        } else if (symbol === 'UVXY') {\n          vixData = dataItem;\n        } else {\n          inputData.push(dataItem);\n        }\n      }\n    }\n  }\n  // Check if this is a direct TwelveData response\n  else if (item.json && item.json.meta && item.json.values) {\n    const symbol = item.json.meta.symbol;\n    if (symbol === 'SPY') {\n      spyData = item.json;\n    } else if (symbol === 'UVXY') {\n      vixData = item.json;\n    } else {\n      inputData.push(item.json);\n    }\n  }\n}\n\nif (inputData.length === 0) {\n  return { stock_symbol: 'UNKNOWN', candles: {}, technicalIndicators: {}, marketContext: {}, error: 'No stock data found' };\n}\n\n// Debug: Log what we found\nconst debugInfo = {\n  stockDataCount: inputData.length,\n  hasSPY: spyData !== null,\n  hasUVXY: vixData !== null,\n  stockSymbols: inputData.map(d => d.meta?.symbol)\n};\n\n// Helper functions for technical indicators\nfunction calculateSMA(prices, period) {\n  if (prices.length < period) return null;\n  const sum = prices.slice(0, period).reduce((a, b) => a + b, 0);\n  return sum / period;\n}\n\nfunction calculateEMA(prices, period) {\n  if (prices.length < period) return null;\n  const multiplier = 2 / (period + 1);\n  let ema = calculateSMA(prices.slice(prices.length - period), period);\n  for (let i = prices.length - period - 1; i >= 0; i--) {\n    ema = (prices[i] - ema) * multiplier + ema;\n  }\n  return ema;\n}\n\nfunction calculateRSI(prices, period = 14) {\n  if (prices.length < period + 1) return null;\n  let gains = 0, losses = 0;\n  for (let i = 0; i < period; i++) {\n    const change = prices[i] - prices[i + 1];\n    if (change > 0) gains += change;\n    else losses -= change;\n  }\n  const avgGain = gains / period;\n  const avgLoss = losses / period;\n  if (avgLoss === 0) return 100;\n  const rs = avgGain / avgLoss;\n  return 100 - (100 / (1 + rs));\n}\n\nfunction calculateMACD(prices) {\n  if (prices.length < 26) return null;\n  const ema12 = calculateEMA(prices, 12);\n  const ema26 = calculateEMA(prices, 26);\n  if (!ema12 || !ema26) return null;\n  const macdLine = ema12 - ema26;\n  const signalLine = calculateEMA([macdLine], 9) || macdLine;\n  return { macdLine: macdLine, signalLine: signalLine, histogram: macdLine - signalLine };\n}\n\nfunction calculateBollingerBands(prices, period = 20) {\n  if (prices.length < period) return null;\n  const sma = calculateSMA(prices, period);\n  const squaredDiffs = prices.slice(0, period).map(p => Math.pow(p - sma, 2));\n  const stdDev = Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / period);\n  return { upper: sma + (stdDev * 2), middle: sma, lower: sma - (stdDev * 2), stdDev: stdDev };\n}\n\n// ATR (Average True Range) - Essential for stop-loss calculation\nfunction calculateATR(candles, period = 14) {\n  if (candles.length < period + 1) return null;\n  const trueRanges = [];\n  for (let i = 0; i < Math.min(candles.length - 1, period + 5); i++) {\n    const high = candles[i].high;\n    const low = candles[i].low;\n    const prevClose = candles[i + 1].close;\n    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));\n    trueRanges.push(tr);\n  }\n  if (trueRanges.length < period) return null;\n  const atr = trueRanges.slice(0, period).reduce((a, b) => a + b, 0) / period;\n  const currentPrice = candles[0].close;\n  const atrPercent = (atr / currentPrice) * 100;\n  return { value: atr, percent: atrPercent, suggestedStop: atr * 2, suggestedStopPercent: atrPercent * 2 };\n}\n\n// Fibonacci Retracement Levels\nfunction calculateFibonacci(candles) {\n  if (candles.length < 10) return null;\n  const highs = candles.map(c => c.high);\n  const lows = candles.map(c => c.low);\n  const swingHigh = Math.max(...highs);\n  const swingLow = Math.min(...lows);\n  const range = swingHigh - swingLow;\n  const currentPrice = candles[0].close;\n  const isUptrend = candles[0].close > candles[candles.length - 1].close;\n  let levels;\n  if (isUptrend) {\n    levels = { level0: swingHigh, level236: swingHigh - (range * 0.236), level382: swingHigh - (range * 0.382), level50: swingHigh - (range * 0.5), level618: swingHigh - (range * 0.618), level786: swingHigh - (range * 0.786), level100: swingLow };\n  } else {\n    levels = { level0: swingLow, level236: swingLow + (range * 0.236), level382: swingLow + (range * 0.382), level50: swingLow + (range * 0.5), level618: swingLow + (range * 0.618), level786: swingLow + (range * 0.786), level100: swingHigh };\n  }\n  let nearestLevel = null;\n  let nearestDistance = Infinity;\n  for (const [name, value] of Object.entries(levels)) {\n    const distance = Math.abs(currentPrice - value);\n    if (distance < nearestDistance) {\n      nearestDistance = distance;\n      nearestLevel = { name: name.replace('level', ''), value: value };\n    }\n  }\n  return { swingHigh, swingLow, range, isUptrend, levels, currentPrice, nearestLevel, nearestLevelPercent: (nearestDistance / currentPrice) * 100 };\n}\n\nfunction findSupportResistance(candles) {\n  if (candles.length < 5) return { support: [], resistance: [] };\n  const highs = candles.map(c => c.high);\n  const lows = candles.map(c => c.low);\n  const resistance = [Math.max(...highs)];\n  const support = [Math.min(...lows)];\n  for (let i = 2; i < candles.length - 2; i++) {\n    if (highs[i] > highs[i-1] && highs[i] > highs[i-2] && highs[i] > highs[i+1] && highs[i] > highs[i+2]) {\n      resistance.push(highs[i]);\n    }\n    if (lows[i] < lows[i-1] && lows[i] < lows[i-2] && lows[i] < lows[i+1] && lows[i] < lows[i+2]) {\n      support.push(lows[i]);\n    }\n  }\n  return { support: [...new Set(support)].sort((a,b) => b-a).slice(0,3), resistance: [...new Set(resistance)].sort((a,b) => b-a).slice(0,3) };\n}\n\nfunction analyzeVolume(candles) {\n  if (!candles[0]?.volume) return null;\n  const volumes = candles.map(c => parseFloat(c.volume) || 0);\n  const avgVolume = volumes.reduce((a,b) => a + b, 0) / volumes.length;\n  const latestVolume = volumes[0];\n  const volumeRatio = latestVolume / avgVolume;\n  return { latest: latestVolume, average: avgVolume, ratio: volumeRatio, trend: volumeRatio > 1.5 ? 'HIGH' : volumeRatio < 0.5 ? 'LOW' : 'NORMAL' };\n}\n\nfunction detectTrend(prices) {\n  if (prices.length < 10) return 'UNKNOWN';\n  const sma5 = calculateSMA(prices, 5);\n  const sma10 = calculateSMA(prices, 10);\n  const sma20 = calculateSMA(prices.slice(0, 20), 20);\n  const currentPrice = prices[0];\n  if (currentPrice > sma5 && sma5 > sma10 && (!sma20 || sma10 > sma20)) return 'STRONG_UPTREND';\n  if (currentPrice > sma5 && sma5 > sma10) return 'UPTREND';\n  if (currentPrice < sma5 && sma5 < sma10 && (!sma20 || sma10 < sma20)) return 'STRONG_DOWNTREND';\n  if (currentPrice < sma5 && sma5 < sma10) return 'DOWNTREND';\n  return 'SIDEWAYS';\n}\n\n// Divergence Detection - RSI and MACD vs Price\nfunction detectDivergence(candles, period = 10) {\n  if (candles.length < period + 5) return null;\n  const closePrices = candles.map(c => c.close);\n  const result = { rsiDivergence: null, macdDivergence: null };\n  \n  // Calculate RSI for recent candles\n  const rsiValues = [];\n  for (let i = 0; i < Math.min(period, candles.length - 14); i++) {\n    const priceSlice = closePrices.slice(i);\n    const rsi = calculateRSI(priceSlice, 14);\n    if (rsi !== null) rsiValues.push({ idx: i, rsi: rsi, price: closePrices[i] });\n  }\n  \n  if (rsiValues.length >= 2) {\n    const recent = rsiValues[0];\n    const older = rsiValues[rsiValues.length - 1];\n    // Bullish divergence: Price makes lower low, RSI makes higher low\n    if (recent.price < older.price && recent.rsi > older.rsi) {\n      result.rsiDivergence = { type: 'BULLISH', description: 'Price lower low + RSI higher low', strength: Math.abs(recent.rsi - older.rsi) };\n    }\n    // Bearish divergence: Price makes higher high, RSI makes lower high\n    else if (recent.price > older.price && recent.rsi < older.rsi) {\n      result.rsiDivergence = { type: 'BEARISH', description: 'Price higher high + RSI lower high', strength: Math.abs(recent.rsi - older.rsi) };\n    }\n  }\n  \n  // Calculate MACD histogram for divergence\n  const macdValues = [];\n  for (let i = 0; i < Math.min(period, candles.length - 26); i++) {\n    const priceSlice = closePrices.slice(i);\n    const macd = calculateMACD(priceSlice);\n    if (macd !== null) macdValues.push({ idx: i, histogram: macd.histogram, price: closePrices[i] });\n  }\n  \n  if (macdValues.length >= 2) {\n    const recent = macdValues[0];\n    const older = macdValues[macdValues.length - 1];\n    if (recent.price < older.price && recent.histogram > older.histogram) {\n      result.macdDivergence = { type: 'BULLISH', description: 'Price lower low + MACD histogram higher', strength: Math.abs(recent.histogram - older.histogram) };\n    } else if (recent.price > older.price && recent.histogram < older.histogram) {\n      result.macdDivergence = { type: 'BEARISH', description: 'Price higher high + MACD histogram lower', strength: Math.abs(recent.histogram - older.histogram) };\n    }\n  }\n  \n  // Combined signal\n  if (result.rsiDivergence && result.macdDivergence && result.rsiDivergence.type === result.macdDivergence.type) {\n    result.combined = { type: result.rsiDivergence.type, description: 'CONFIRMED - Both RSI and MACD show ' + result.rsiDivergence.type + ' divergence' };\n  }\n  \n  return result;\n}\n\n// 52-Week High/Low Proximity\nfunction calculate52WeekProximity(candles) {\n  if (candles.length < 5) return null;\n  const highs = candles.map(c => c.high);\n  const lows = candles.map(c => c.low);\n  const periodHigh = Math.max(...highs);\n  const periodLow = Math.min(...lows);\n  const currentPrice = candles[0].close;\n  const range = periodHigh - periodLow;\n  const distanceFromHigh = periodHigh - currentPrice;\n  const distanceFromLow = currentPrice - periodLow;\n  const percentFromHigh = (distanceFromHigh / periodHigh) * 100;\n  const percentFromLow = (distanceFromLow / periodLow) * 100;\n  const positionInRange = range > 0 ? ((currentPrice - periodLow) / range) * 100 : 50;\n  \n  let proximity = 'MIDDLE';\n  let interpretation = '';\n  if (percentFromHigh <= 3) {\n    proximity = 'AT_HIGH';\n    interpretation = 'Trading near highs - potential breakout or resistance';\n  } else if (percentFromHigh <= 10) {\n    proximity = 'NEAR_HIGH';\n    interpretation = 'Near highs - bullish momentum, watch for breakout';\n  } else if (percentFromLow <= 3) {\n    proximity = 'AT_LOW';\n    interpretation = 'Trading near lows - potential breakdown or support';\n  } else if (percentFromLow <= 10) {\n    proximity = 'NEAR_LOW';\n    interpretation = 'Near lows - potential bounce or continued weakness';\n  } else {\n    interpretation = 'Trading in middle of range';\n  }\n  \n  return { periodHigh, periodLow, currentPrice, distanceFromHigh, distanceFromLow, percentFromHigh, percentFromLow, positionInRange, proximity, interpretation };\n}\n\n// Gap Detection\nfunction detectGaps(candles, minGapPercent = 0.5) {\n  if (candles.length < 3) return null;\n  const gaps = [];\n  const currentPrice = candles[0].close;\n  \n  for (let i = 0; i < candles.length - 1; i++) {\n    const current = candles[i];\n    const previous = candles[i + 1];\n    \n    // Gap up: current low > previous high\n    if (current.low > previous.high) {\n      const gapSize = current.low - previous.high;\n      const gapPercent = (gapSize / previous.high) * 100;\n      if (gapPercent >= minGapPercent) {\n        const isFilled = currentPrice <= previous.high;\n        gaps.push({ type: 'GAP_UP', date: current.datetime, gapStart: previous.high, gapEnd: current.low, gapSize, gapPercent, isFilled, distanceToFill: isFilled ? 0 : current.low - currentPrice });\n      }\n    }\n    // Gap down: current high < previous low\n    else if (current.high < previous.low) {\n      const gapSize = previous.low - current.high;\n      const gapPercent = (gapSize / previous.low) * 100;\n      if (gapPercent >= minGapPercent) {\n        const isFilled = currentPrice >= previous.low;\n        gaps.push({ type: 'GAP_DOWN', date: current.datetime, gapStart: current.high, gapEnd: previous.low, gapSize, gapPercent, isFilled, distanceToFill: isFilled ? 0 : currentPrice - previous.low });\n      }\n    }\n  }\n  \n  const unfilledGaps = gaps.filter(g => !g.isFilled);\n  const nearestUnfilledGap = unfilledGaps.length > 0 ? unfilledGaps.reduce((nearest, gap) => Math.abs(gap.distanceToFill) < Math.abs(nearest.distanceToFill) ? gap : nearest) : null;\n  \n  return { totalGaps: gaps.length, unfilledCount: unfilledGaps.length, gaps: gaps.slice(0, 5), nearestUnfilledGap, hasUnfilledGapAbove: unfilledGaps.some(g => g.type === 'GAP_DOWN'), hasUnfilledGapBelow: unfilledGaps.some(g => g.type === 'GAP_UP') };\n}\n\n// Process SPY market data\nfunction processMarketData(data) {\n  if (!data || !data.values) return null;\n  const values = data.values.slice(0, 20);\n  const closePrices = values.map(v => parseFloat(v.close));\n  const currentPrice = closePrices[0];\n  const priceChange1D = closePrices.length >= 2 ? ((closePrices[0] - closePrices[1]) / closePrices[1] * 100) : null;\n  const priceChange5D = closePrices.length >= 5 ? ((closePrices[0] - closePrices[4]) / closePrices[4] * 100) : null;\n  const priceChange20D = closePrices.length >= 20 ? ((closePrices[0] - closePrices[19]) / closePrices[19] * 100) : null;\n  const sma20 = calculateSMA(closePrices, 20);\n  const trend = detectTrend(closePrices);\n  const rsi = calculateRSI(closePrices, 14);\n  return { currentPrice, priceChange1D, priceChange5D, priceChange20D, sma20, trend, rsi, aboveSMA20: currentPrice > sma20 };\n}\n\n// Process UVXY volatility data (proxy for VIX)\nfunction processVIX(data) {\n  if (!data || !data.values) return null;\n  const values = data.values.slice(0, 20);\n  const closePrices = values.map(v => parseFloat(v.close));\n  const currentUVXY = closePrices[0];\n  const avgUVXY = calculateSMA(closePrices, 20);\n  const priceChange1D = closePrices.length >= 2 ? ((closePrices[0] - closePrices[1]) / closePrices[1] * 100) : null;\n  const priceChange5D = closePrices.length >= 5 ? ((closePrices[0] - closePrices[4]) / closePrices[4] * 100) : null;\n  const percentAboveAvg = avgUVXY ? ((currentUVXY - avgUVXY) / avgUVXY) * 100 : 0;\n  let regime = 'NORMAL';\n  // UVXY regime based on percent above/below 20-day average\n  if (percentAboveAvg < -20) regime = 'COMPLACENT';\n  else if (percentAboveAvg < -5) regime = 'LOW_VOLATILITY';\n  else if (percentAboveAvg < 15) regime = 'NORMAL';\n  else if (percentAboveAvg < 40) regime = 'ELEVATED';\n  else if (percentAboveAvg < 80) regime = 'HIGH';\n  else regime = 'EXTREME_FEAR';\n  return { currentVIX: currentUVXY, avgVIX: avgUVXY, priceChange1D, priceChange5D, percentAboveAvg, regime, isElevated: percentAboveAvg > 15, isExtreme: percentAboveAvg > 40 };\n}\n\nconst spyProcessed = processMarketData(spyData);\n\nconst marketContext = {\n  spy: spyProcessed,\n  vix: processVIX(vixData),\n  timestamp: new Date().toISOString()\n};\n\nconst output = {\n  stock_symbol: inputData[0]?.meta?.symbol || 'UNKNOWN',\n  candles: { '4h': [], '1day': [], '1week': [] },\n  technicalIndicators: {},\n  marketContext: marketContext,\n  relativeStrength: {}\n};\n\ninputData.forEach(intervalData => {\n  if (!intervalData.meta || !intervalData.values) return;\n  const interval = intervalData.meta.interval;\n  const values = intervalData.values.slice(0, 30);\n  \n  if (output.candles[interval] !== undefined) {\n    const candles = values.map(candle => ({\n      datetime: candle.datetime,\n      open: parseFloat(candle.open),\n      close: parseFloat(candle.close),\n      high: parseFloat(candle.high),\n      low: parseFloat(candle.low),\n      volume: candle.volume ? parseFloat(candle.volume) : null\n    }));\n    output.candles[interval] = candles.slice(0, 10);\n    \n    const closePrices = candles.map(c => c.close);\n    const indicators = {\n      sma5: calculateSMA(closePrices, 5),\n      sma10: calculateSMA(closePrices, 10),\n      sma20: calculateSMA(closePrices, 20),\n      ema12: calculateEMA(closePrices, 12),\n      ema26: calculateEMA(closePrices, 26),\n      rsi: calculateRSI(closePrices, 14),\n      macd: calculateMACD(closePrices),\n      bollingerBands: calculateBollingerBands(closePrices, 20),\n      supportResistance: findSupportResistance(candles),\n      volume: analyzeVolume(candles),\n      trend: detectTrend(closePrices),\n      priceChange: closePrices.length >= 2 ? ((closePrices[0] - closePrices[closePrices.length-1]) / closePrices[closePrices.length-1] * 100) : null,\n      atr: calculateATR(candles, 14),\n      fibonacci: calculateFibonacci(candles),\n      divergence: detectDivergence(candles, 10),\n      weekProximity: calculate52WeekProximity(candles),\n      gaps: detectGaps(candles, 0.5)\n    };\n    output.technicalIndicators[interval] = indicators;\n    \n    // Calculate Relative Strength vs SPY for daily timeframe\n    if (interval === '1day' && spyProcessed) {\n      const stockChange5D = closePrices.length >= 5 ? ((closePrices[0] - closePrices[4]) / closePrices[4] * 100) : null;\n      const stockChange20D = closePrices.length >= 20 ? ((closePrices[0] - closePrices[19]) / closePrices[19] * 100) : null;\n      const rs5D = stockChange5D !== null && spyProcessed.priceChange5D !== null ? stockChange5D - spyProcessed.priceChange5D : null;\n      const rs20D = stockChange20D !== null && spyProcessed.priceChange20D !== null ? stockChange20D - spyProcessed.priceChange20D : null;\n      let rsRating = 'NEUTRAL';\n      if (rs5D !== null && rs20D !== null) {\n        if (rs5D > 2 && rs20D > 5) rsRating = 'STRONG_OUTPERFORMER';\n        else if (rs5D > 0 && rs20D > 0) rsRating = 'OUTPERFORMER';\n        else if (rs5D < -2 && rs20D < -5) rsRating = 'STRONG_UNDERPERFORMER';\n        else if (rs5D < 0 && rs20D < 0) rsRating = 'UNDERPERFORMER';\n      }\n      output.relativeStrength = { stockChange5D, stockChange20D, spyChange5D: spyProcessed.priceChange5D, spyChange20D: spyProcessed.priceChange20D, rs5D, rs20D, rating: rsRating };\n    }\n  }\n});\n\nreturn output;"
+      },
+      "id": "566fe9e2-bd3f-48e2-b9e0-958fedfd17ba",
+      "name": "Process Technical Data",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        832,
+        400
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build request body for symbol conversion\nconst chatInput = $json.chatInput;\n\nconst requestBody = {\n  model: 'claude-sonnet-4-20250514',\n  max_tokens: 50,\n  messages: [\n    {\n      role: 'user',\n      content: `Convert this to a stock ticker symbol. Return ONLY the symbol (e.g., AAPL, MSFT, GOOGL), nothing else: ${chatInput}`\n    }\n  ]\n};\n\nreturn { requestBody: requestBody, originalInput: chatInput };"
+      },
+      "id": "dd717aa2-a862-433c-b5bf-04e8756f5322",
+      "name": "Build Symbol Request",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -528,
+        464
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {}
+      },
+      "id": "14754f0c-635e-4d2e-9c54-8cc4b1995bde",
+      "name": "Convert to Stock Symbol",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        -320,
+        464
+      ],
+      "typeVersion": 4.2,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "eoHASyr9aPKm4qRl",
+          "name": "News API"
+        },
+        "anthropicApi": {
+          "id": "wTMqnFAChubo4ULX",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst originalInput = $('Build Symbol Request').first().json.originalInput;\nconst symbol = (response.content?.[0]?.text || '').trim().toUpperCase();\n\nif (!symbol || symbol.length > 5 || !/^[A-Z]+$/.test(symbol)) {\n  throw new Error(`Could not extract valid symbol from: ${originalInput}`);\n}\n\nreturn {\n  symbol: symbol,\n  originalInput: originalInput\n};"
+      },
+      "id": "2bd562a0-14f9-4498-b194-62e18e9ba680",
+      "name": "Extract Symbol",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -128,
+        464
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {},
+      "id": "ebe724b8-2211-4ab0-9938-469de1ed777d",
+      "name": "Merge News & Technical",
+      "type": "n8n-nodes-base.merge",
+      "position": [
+        1072,
+        592
+      ],
+      "typeVersion": 3.2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the news sentiment from Claude's response\nconst response = $input.first().json;\nlet sentiment;\n\ntry {\n  const content = response.content?.[0]?.text || '{}';\n  // Try to extract JSON from the response\n  const jsonMatch = content.match(/\\{[^{}]*\\}/);\n  if (jsonMatch) {\n    sentiment = JSON.parse(jsonMatch[0]);\n  } else {\n    sentiment = JSON.parse(content);\n  }\n} catch (e) {\n  sentiment = {\n    category: 'Neutral',\n    score: 0,\n    rationale: 'Unable to parse news sentiment'\n  };\n}\n\nreturn { sentiment: sentiment };"
+      },
+      "id": "e3fcb924-f181-4d0b-9b9b-d83ebe6d454b",
+      "name": "Parse News Sentiment",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        880,
+        784
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare all data for the AI analyst with comprehensive technical indicators\nconst items = $input.all();\n\n// Try to get symbol from webhook path first, then chat path\nlet symbol, originalInput;\ntry {\n  const webhookData = $('Extract Symbol from Webhook').first().json;\n  symbol = webhookData.symbol;\n  originalInput = webhookData.originalInput;\n} catch (e) {\n  // Fall back to chat path\n  const chatData = $('Extract Symbol').first().json;\n  symbol = chatData.symbol;\n  originalInput = chatData.originalInput;\n}\n\nlet technicalData = null;\nlet newsSentiment = { category: 'Neutral', score: 0, rationale: 'No news data' };\n\nfor (const item of items) {\n  if (item.json.stock_symbol) {\n    technicalData = item.json;\n  }\n  if (item.json.sentiment) {\n    newsSentiment = item.json.sentiment;\n  }\n}\n\nfunction formatIndicators(indicators, interval) {\n  if (!indicators) return `${interval}: No data`;\n  let summary = `\\n### ${interval.toUpperCase()} TIMEFRAME\\n`;\n  summary += `* **Trend:** ${indicators.trend || 'N/A'}\\n`;\n  summary += `* **Price Change:** ${indicators.priceChange ? indicators.priceChange.toFixed(2) + '%' : 'N/A'}\\n`;\n  summary += `* **RSI(14):** ${indicators.rsi ? indicators.rsi.toFixed(2) : 'N/A'}`;\n  if (indicators.rsi) {\n    if (indicators.rsi > 70) summary += ' (OVERBOUGHT)';\n    else if (indicators.rsi < 30) summary += ' (OVERSOLD)';\n  }\n  summary += '\\n';\n  if (indicators.macd) {\n    summary += `* **MACD:** Line: ${indicators.macd.macdLine.toFixed(4)}, Signal: ${indicators.macd.signalLine.toFixed(4)}, Histogram: ${indicators.macd.histogram.toFixed(4)}`;\n    summary += indicators.macd.histogram > 0 ? ' (BULLISH)' : ' (BEARISH)';\n    summary += '\\n';\n  }\n  summary += `* **Moving Averages:** SMA5: $${indicators.sma5?.toFixed(2) || 'N/A'}, SMA10: $${indicators.sma10?.toFixed(2) || 'N/A'}, SMA20: $${indicators.sma20?.toFixed(2) || 'N/A'}\\n`;\n  if (indicators.bollingerBands) {\n    const bb = indicators.bollingerBands;\n    summary += `* **Bollinger Bands:** Upper: $${bb.upper.toFixed(2)}, Middle: $${bb.middle.toFixed(2)}, Lower: $${bb.lower.toFixed(2)}\\n`;\n  }\n  if (indicators.supportResistance) {\n    const sr = indicators.supportResistance;\n    summary += `* **Resistance Levels:** ${sr.resistance.map(r => '$' + r.toFixed(2)).join(', ') || 'N/A'}\\n`;\n    summary += `* **Support Levels:** ${sr.support.map(s => '$' + s.toFixed(2)).join(', ') || 'N/A'}\\n`;\n  }\n  if (indicators.volume) {\n    summary += `* **Volume:** ${indicators.volume.trend} (${(indicators.volume.ratio * 100).toFixed(0)}% of avg)\\n`;\n  }\n  // ATR (Average True Range)\n  if (indicators.atr) {\n    const atr = indicators.atr;\n    summary += `* **ATR(14):** $${atr.value.toFixed(2)} (${atr.percent.toFixed(2)}% of price)\\n`;\n    summary += `* **ATR-Based Stop:** $${atr.suggestedStop.toFixed(2)} (2x ATR = ${atr.suggestedStopPercent.toFixed(2)}%)\\n`;\n  }\n  // Fibonacci Levels\n  if (indicators.fibonacci) {\n    const fib = indicators.fibonacci;\n    summary += `* **Fibonacci Swing:** High: $${fib.swingHigh.toFixed(2)}, Low: $${fib.swingLow.toFixed(2)} (${fib.isUptrend ? 'UPTREND' : 'DOWNTREND'})\\n`;\n    summary += `* **Fib Levels:** 23.6%: $${fib.levels.level236.toFixed(2)}, 38.2%: $${fib.levels.level382.toFixed(2)}, 50%: $${fib.levels.level50.toFixed(2)}, 61.8%: $${fib.levels.level618.toFixed(2)}\\n`;\n    if (fib.nearestLevel) {\n      summary += `* **Nearest Fib Level:** ${fib.nearestLevel.name}% at $${fib.nearestLevel.value.toFixed(2)} (${fib.nearestLevelPercent.toFixed(2)}% away)\\n`;\n    }\n  }\n  // Divergence Detection\n  if (indicators.divergence) {\n    const div = indicators.divergence;\n    if (div.rsiDivergence) {\n      summary += `* **RSI Divergence:** ${div.rsiDivergence.type} - ${div.rsiDivergence.description}\\n`;\n    }\n    if (div.macdDivergence) {\n      summary += `* **MACD Divergence:** ${div.macdDivergence.type} - ${div.macdDivergence.description}\\n`;\n    }\n    if (div.combined) {\n      summary += `* **DIVERGENCE ALERT:** ${div.combined.description}\\n`;\n    }\n  }\n  // 52-Week Proximity\n  if (indicators.weekProximity) {\n    const wp = indicators.weekProximity;\n    summary += `* **Period Range:** High: $${wp.periodHigh.toFixed(2)}, Low: $${wp.periodLow.toFixed(2)}\\n`;\n    summary += `* **Position in Range:** ${wp.positionInRange.toFixed(1)}% (${wp.proximity})\\n`;\n    summary += `* **Distance from High:** ${wp.percentFromHigh.toFixed(2)}%, Distance from Low: ${wp.percentFromLow.toFixed(2)}%\\n`;\n    if (wp.proximity !== 'MIDDLE') {\n      summary += `* **Proximity Alert:** ${wp.interpretation}\\n`;\n    }\n  }\n  // Gap Detection\n  if (indicators.gaps && indicators.gaps.totalGaps > 0) {\n    const gaps = indicators.gaps;\n    summary += `* **Gaps Detected:** ${gaps.totalGaps} total, ${gaps.unfilledCount} unfilled\\n`;\n    if (gaps.nearestUnfilledGap) {\n      const ng = gaps.nearestUnfilledGap;\n      summary += `* **Nearest Unfilled Gap:** ${ng.type} at $${ng.gapStart.toFixed(2)}-$${ng.gapEnd.toFixed(2)} (${ng.gapPercent.toFixed(2)}%)\\n`;\n    }\n    if (gaps.hasUnfilledGapAbove) summary += `* **Gap Target Above:** Unfilled gap above current price (potential magnet)\\n`;\n    if (gaps.hasUnfilledGapBelow) summary += `* **Gap Target Below:** Unfilled gap below current price (potential magnet)\\n`;\n  }\n  return summary;\n}\n\nfunction formatMarketContext(marketContext, relativeStrength) {\n  if (!marketContext) return '## MARKET CONTEXT\\nNo market data available\\n';\n  let summary = '## MARKET CONTEXT\\n';\n  \n  // SPY (S&P 500) Analysis\n  if (marketContext.spy) {\n    const spy = marketContext.spy;\n    summary += '### S&P 500 (SPY)\\n';\n    summary += `* **Current Price:** $${spy.currentPrice?.toFixed(2) || 'N/A'}\\n`;\n    summary += `* **1-Day Change:** ${spy.priceChange1D?.toFixed(2) || 'N/A'}%\\n`;\n    summary += `* **5-Day Change:** ${spy.priceChange5D?.toFixed(2) || 'N/A'}%\\n`;\n    summary += `* **20-Day Change:** ${spy.priceChange20D?.toFixed(2) || 'N/A'}%\\n`;\n    summary += `* **Trend:** ${spy.trend || 'N/A'}\\n`;\n    summary += `* **RSI(14):** ${spy.rsi?.toFixed(2) || 'N/A'}\\n`;\n    summary += `* **Position vs SMA20:** ${spy.aboveSMA20 ? 'ABOVE (Bullish)' : 'BELOW (Bearish)'}\\n`;\n    \n    let marketBias = 'NEUTRAL';\n    if (spy.trend?.includes('UPTREND') && spy.aboveSMA20) marketBias = 'BULLISH';\n    else if (spy.trend?.includes('DOWNTREND') && !spy.aboveSMA20) marketBias = 'BEARISH';\n    summary += `* **Market Bias:** ${marketBias}\\n`;\n  } else {\n    summary += '### S&P 500 (SPY)\\nNo data available\\n';\n  }\n  \n  // VIX Analysis\n  if (marketContext.vix) {\n    const vix = marketContext.vix;\n    summary += '\\n### Volatility (UVXY Proxy)\\n';\n    summary += `* **Current UVXY:** $${vix.currentVIX?.toFixed(2) || 'N/A'}\\n`;\n    summary += `* **20-Day Avg:** $${vix.avgVIX?.toFixed(2) || 'N/A'}\\n`;\n    summary += `* **% Above Avg:** ${vix.percentAboveAvg?.toFixed(1) || 'N/A'}%\\n`;\n    summary += `* **1-Day Change:** ${vix.priceChange1D?.toFixed(2) || 'N/A'}%\\n`;\n    summary += `* **Volatility Regime:** ${vix.regime || 'N/A'}\\n`;\n    \n    let vixInterpretation = '';\n    if (vix.regime === 'COMPLACENT') vixInterpretation = 'Extreme complacency - potential reversal risk';\n    else if (vix.regime === 'LOW_VOLATILITY') vixInterpretation = 'Low fear - favorable for longs, but watch for spikes';\n    else if (vix.regime === 'NORMAL') vixInterpretation = 'Normal conditions - standard position sizing';\n    else if (vix.regime === 'ELEVATED') vixInterpretation = 'Elevated fear - reduce position sizes, wider stops';\n    else if (vix.regime === 'HIGH') vixInterpretation = 'High fear - caution advised, potential capitulation';\n    else if (vix.regime === 'EXTREME_FEAR') vixInterpretation = 'Extreme fear - contrarian buy signal possible, but dangerous';\n    summary += `* **Interpretation:** ${vixInterpretation}\\n`;\n  } else {\n    summary += '\\n### VIX (Volatility Index)\\nNo data available\\n';\n  }\n  \n  // Relative Strength vs SPY\n  if (relativeStrength && relativeStrength.rating) {\n    summary += '\\n### RELATIVE STRENGTH vs SPY\\n';\n    summary += `* **Stock 5-Day Change:** ${relativeStrength.stockChange5D?.toFixed(2) || 'N/A'}%\\n`;\n    summary += `* **SPY 5-Day Change:** ${relativeStrength.spyChange5D?.toFixed(2) || 'N/A'}%\\n`;\n    summary += `* **5-Day RS:** ${relativeStrength.rs5D?.toFixed(2) || 'N/A'}% (Stock - SPY)\\n`;\n    summary += `* **Stock 20-Day Change:** ${relativeStrength.stockChange20D?.toFixed(2) || 'N/A'}%\\n`;\n    summary += `* **SPY 20-Day Change:** ${relativeStrength.spyChange20D?.toFixed(2) || 'N/A'}%\\n`;\n    summary += `* **20-Day RS:** ${relativeStrength.rs20D?.toFixed(2) || 'N/A'}% (Stock - SPY)\\n`;\n    summary += `* **RS Rating:** ${relativeStrength.rating}\\n`;\n    \n    let rsInterpretation = '';\n    if (relativeStrength.rating === 'STRONG_OUTPERFORMER') rsInterpretation = 'Excellent relative strength - strong candidate for longs';\n    else if (relativeStrength.rating === 'OUTPERFORMER') rsInterpretation = 'Good relative strength - favorable for longs';\n    else if (relativeStrength.rating === 'STRONG_UNDERPERFORMER') rsInterpretation = 'Weak relative strength - avoid longs, potential short';\n    else if (relativeStrength.rating === 'UNDERPERFORMER') rsInterpretation = 'Below-average strength - caution on longs';\n    else rsInterpretation = 'Neutral relative performance vs market';\n    summary += `* **Interpretation:** ${rsInterpretation}\\n`;\n  }\n  \n  return summary;\n}\n\nlet technicalSummary = 'No technical data available';\nlet marketContextSummary = '';\nlet currentPrice = null;\n\nif (technicalData && technicalData.technicalIndicators) {\n  const ti = technicalData.technicalIndicators;\n  const candles = technicalData.candles;\n  \n  if (candles['4h']?.[0]) {\n    currentPrice = candles['4h'][0].close;\n  } else if (candles['1day']?.[0]) {\n    currentPrice = candles['1day'][0].close;\n  }\n  \n  // Format market context with relative strength\n  marketContextSummary = formatMarketContext(technicalData.marketContext, technicalData.relativeStrength);\n  \n  technicalSummary = `## CURRENT PRICE: $${currentPrice?.toFixed(2) || 'N/A'}\\n`;\n  technicalSummary += formatIndicators(ti['4h'], '4-Hour');\n  technicalSummary += formatIndicators(ti['1day'], 'Daily');\n  technicalSummary += formatIndicators(ti['1week'], 'Weekly');\n}\n\nreturn {\n  symbol: symbol,\n  originalInput: originalInput,\n  currentPrice: currentPrice,\n  marketContextSummary: marketContextSummary,\n  technicalSummary: technicalSummary,\n  technicalData: technicalData,\n  newsSentiment: newsSentiment\n};"
+      },
+      "id": "9714857d-9357-4b4a-9a2f-51994af9b215",
+      "name": "Prepare Analysis Data",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1296,
+        592
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build request body for trading analysis with comprehensive technical indicators\nconst data = $json;\n\nconst requestBody = {\n  model: 'claude-sonnet-4-20250514',\n  max_tokens: 3000,\n  system: `You are a Senior Quantitative Strategist at a top-tier hedge fund. Synthesize multi-timeframe technical analysis, market context, and news sentiment to produce a high-probability trade setup.\n\n## MARKET CONTEXT FRAMEWORK (Weight: 20%):\n\n### S&P 500 (SPY) Analysis\n- Market in UPTREND + Stock in UPTREND = Go with full conviction\n- Market in UPTREND + Stock in DOWNTREND = Caution, swimming against tide\n- Market in DOWNTREND + Stock in UPTREND = Relative strength, but risky\n- Market in DOWNTREND + Stock in DOWNTREND = Avoid longs, consider shorts\n- SPY above SMA20 = Bullish environment for longs\n- SPY below SMA20 = Bearish environment, reduce long exposure\n\n### VIX Volatility Regime Adjustments\n- COMPLACENT (VIX < 12): Reduce position sizes, complacency often precedes corrections\n- LOW_VOLATILITY (12-20): Normal operations, standard position sizing\n- NORMAL (20-25): Slightly elevated, tighten stops\n- ELEVATED (25-30): Reduce position sizes by 25-50%, wider stops needed\n- HIGH (30-40): Reduce position sizes by 50-75%, only high-conviction trades\n- EXTREME_FEAR (VIX > 40): Contrarian opportunities, but extreme caution required\n\n### Relative Strength Assessment\n- STRONG_OUTPERFORMER: RS5D > 2% AND RS20D > 5% - Best candidates\n- OUTPERFORMER: Both RS metrics positive - Good candidates\n- UNDERPERFORMER: Both RS metrics negative - Avoid for longs\n- STRONG_UNDERPERFORMER: RS5D < -2% AND RS20D < -5% - Consider shorts\n- In bull market, buy leaders (outperformers)\n- In bear market, relative strength leaders hold up best\n\n## TECHNICAL ANALYSIS FRAMEWORK:\n\n### Trend Analysis (Weight: 25%)\n- STRONG_UPTREND/DOWNTREND: Price > SMA5 > SMA10 > SMA20 (or inverse)\n- UPTREND/DOWNTREND: Price > SMA5 > SMA10 (or inverse)\n- SIDEWAYS: Mixed signals, range-bound\n\n### Momentum Indicators (Weight: 20%)\n- RSI > 70: Overbought (potential reversal/pullback)\n- RSI < 30: Oversold (potential bounce)\n- RSI 40-60: Neutral momentum\n- MACD Histogram positive & rising: Bullish momentum\n- MACD Histogram negative & falling: Bearish momentum\n\n### Mean Reversion (Weight: 10%)\n- Price near upper Bollinger Band: Potential resistance/reversal\n- Price near lower Bollinger Band: Potential support/bounce\n- Price at middle band: Fair value zone\n\n### Support/Resistance (Weight: 10%)\n- Use identified levels for entry/exit planning\n- Breakouts above resistance = bullish\n- Breakdowns below support = bearish\n\n### Volume Confirmation (Weight: 15%)\n- HIGH volume on moves = confirms trend\n- LOW volume on moves = weak/suspect move\n- Volume divergence = potential reversal\n\n### ATR (Average True Range) - For Stop-Loss Calculation\n- ATR measures typical price movement volatility\n- Use 2x ATR as minimum stop-loss distance for swing trades\n- Use 1x ATR for day trades, 3x ATR for position trades\n- ATR% helps normalize across different priced stocks\n- High ATR% (>3%) = volatile stock, wider stops needed\n- Low ATR% (<1%) = stable stock, tighter stops possible\n\n### Fibonacci Retracement Levels\n- Key levels: 23.6%, 38.2%, 50%, 61.8%, 78.6%\n- In uptrend: Look for bounces at 38.2% or 50% retracement\n- In downtrend: Look for rejection at 38.2% or 50% retracement\n- 61.8% is the \"golden ratio\" - strongest support/resistance\n- Price near a Fib level = potential reversal zone\n- Use Fib levels to set targets and stops\n\n### Divergence Detection (Weight: 15%)\n- BULLISH DIVERGENCE: Price makes lower low BUT RSI/MACD makes higher low = potential reversal UP\n- BEARISH DIVERGENCE: Price makes higher high BUT RSI/MACD makes lower high = potential reversal DOWN\n- CONFIRMED divergence (both RSI and MACD agree) = HIGH probability signal\n- Divergence is a LEADING indicator - often precedes price reversal by several bars\n- Use divergence to time entries, not as sole signal\n- Divergence in oversold/overbought zones is more reliable\n\n### 52-Week High/Low Proximity (Weight: 10%)\n- AT_HIGH (within 3%): Breakout territory OR resistance rejection zone\n- NEAR_HIGH (within 10%): Strong momentum, watch for breakout\n- AT_LOW (within 3%): Breakdown risk OR capitulation bounce zone\n- NEAR_LOW (within 10%): Potential value OR continued weakness\n- MIDDLE: Range-bound, wait for directional move\n- New 52-week highs in bull market = strength, buy the dip\n- New 52-week lows in bear market = weakness, avoid catching falling knife\n- Use position in range to gauge upside/downside potential\n\n### Gap Analysis (Weight: 5%)\n- UNFILLED GAPS act as magnets - price tends to return to fill them\n- Gap Up unfilled BELOW current price = potential support/target on pullback\n- Gap Down unfilled ABOVE current price = potential resistance/target on rally\n- Recent unfilled gaps more relevant than old ones\n- Large gaps (>2%) are more significant than small gaps\n- Gaps on HIGH volume are more likely to hold\n- Include nearest unfilled gap in target analysis\n\n## TIME HORIZON CLASSIFICATION:\nBased on the dominant timeframe signals, classify the trade:\n\n### Day Trade (Hours)\n- Primary signal from 4H timeframe\n- Quick momentum plays, mean reversion\n- Tighter stops (0.5-1%), smaller targets\n- Best when: Strong 4H signal, daily neutral/supportive\n\n### Swing Trade (Days to Weeks)\n- Primary signal from Daily timeframe\n- Trend continuation or reversal plays\n- Moderate stops (2-5%), larger targets\n- Best when: Daily and 4H aligned, weekly supportive\n\n### Position Trade (Weeks to Months)\n- Primary signal from Weekly timeframe\n- Major trend participation\n- Wider stops (5-10%), significant targets\n- Best when: All timeframes aligned\n\n## POSITION SIZING BASED ON CONFIDENCE + VIX ADJUSTMENT:\n\nBase position sizes (adjust DOWN based on VIX regime):\n| Confidence | Base Size | VIX Elevated | VIX High | VIX Extreme |\n|------------|-----------|--------------|----------|-------------|\n| 9-10/10 | 3-5% | 2-3% | 1-2% | 0.5-1% |\n| 7-8/10 | 2-3% | 1.5-2% | 0.75-1% | 0.5% |\n| 5-6/10 | 1-2% | 0.75-1% | 0.5% | PASS |\n| 3-4/10 | 0.5-1% | 0.25-0.5% | PASS | PASS |\n| 1-2/10 | PASS | PASS | PASS | PASS |\n\n## DECISION RULES:\n- BUY: Market supportive + 2+ timeframes bullish + RSI not overbought + (positive news OR neutral news with strong technicals)\n- SELL: Market weak + 2+ timeframes bearish + RSI not oversold + (negative news OR neutral news with weak technicals)\n- HOLD: Conflicting signals across timeframes OR mixed indicators OR VIX in EXTREME zone\n\n## OUTPUT FORMAT (Strict Markdown):\n\n## Analysis: [Symbol]\n**The Verdict:** [BUY / SELL / HOLD] (Confidence: X/10)\n**Time Horizon:** [Day Trade / Swing Trade / Position Trade] - Expected holding period: [X hours/days/weeks]\n\n### Market Environment\n| Factor | Status | Impact |\n|--------|--------|--------|\n| S&P 500 Trend | [Trend] | Bullish/Bearish/Neutral |\n| SPY vs SMA20 | Above/Below | Favorable/Unfavorable |\n| VIX Level | [Value] ([Regime]) | [Position size adjustment] |\n| Relative Strength | [Rating] (RS5D: X%, RS20D: X%) | [Implication] |\n\n**Market Verdict:** [Favorable/Neutral/Unfavorable] for [longs/shorts]\n\n### Multi-Timeframe Synopsis\n| Timeframe | Trend | RSI | MACD | Signal |\n|-----------|-------|-----|------|--------|\n| 4H | ... | ... | ... | Bullish/Bearish/Neutral |\n| Daily | ... | ... | ... | Bullish/Bearish/Neutral |\n| Weekly | ... | ... | ... | Bullish/Bearish/Neutral |\n\n**Timeframe Alignment:** [Strong/Moderate/Weak] - [X of 3 timeframes agree]\n\n### Key Technical Levels\n* **Immediate Resistance:** $X\n* **Immediate Support:** $X\n* **Bollinger Position:** Upper/Middle/Lower band\n* **Nearest Fibonacci:** X% level at $X\n* **ATR(14):** $X (X% of price)\n* **Range Position:** X% (AT_HIGH/NEAR_HIGH/MIDDLE/NEAR_LOW/AT_LOW)\n* **Divergence Signal:** [None/Bullish RSI/Bearish RSI/Bullish MACD/Bearish MACD/CONFIRMED]\n* **Nearest Unfilled Gap:** $X (Gap Up/Down from [date])\n\n### Rationale\n* **Market Context:** [1-2 sentences on how broader market affects this trade]\n* **Technical Reality:** [2-3 sentences synthesizing multi-timeframe analysis]\n* **Volume Context:** [1 sentence on volume confirmation]\n* **Sentiment Impact:** [1 sentence on how news affects the setup]\n* **Time Horizon Justification:** [1 sentence explaining why this timeframe was chosen]\n* **Divergence/Momentum:** [1 sentence on any divergence signals or range position implications]\n* **Gap Targets:** [1 sentence if unfilled gaps exist as potential targets/magnets]\n\n### Trade Setup\n* **Entry Zone:** $X - $X\n* **Stop Loss:** $X (based on 2x ATR = $X, or X% from entry)\n* **Target 1:** $X (Fib X% level, X:1 R/R) - [Expected timeframe]\n* **Target 2:** $X (Fib X% level or resistance, X:1 R/R) - [Expected timeframe]\n\n### Position Sizing\n* **Base Recommendation:** X% of portfolio (based on confidence)\n* **VIX-Adjusted Size:** X% of portfolio (after volatility adjustment)\n* **Max Risk per Trade:** X% of portfolio value\n* **Scaling Strategy:** [Enter full / Scale in at levels / etc.]\n\n### Risk Factors\n* [List 2-3 key risks to monitor]\n* **Market Risk:** [How would a broad market selloff affect this trade?]\n* **Invalidation Level:** $X - [If price reaches this, the thesis is wrong]\n\n### Trade Management\n* **Partial Profit:** Take X% off at Target 1\n* **Trail Stop:** Move stop to breakeven after [condition]\n* **Time Stop:** Re-evaluate if target not hit within [timeframe]\n* **VIX Alert:** If VIX spikes above [level], reduce position by [X%]`,\n  messages: [\n    {\n      role: 'user',\n      content: `Analyze ${data.symbol} (${data.originalInput}):\n\n${data.marketContextSummary}\n---\n${data.technicalSummary}\n\n---\n## NEWS SENTIMENT ANALYSIS\n* **Category:** ${data.newsSentiment.category}\n* **Score:** ${data.newsSentiment.score} (scale: -1.0 bearish to +1.0 bullish)\n* **Rationale:** ${data.newsSentiment.rationale}\n\n---\nProvide your comprehensive trading recommendation. Consider the broader market environment (SPY trend and VIX regime) when determining your conviction level and position sizing. Adjust recommendations based on whether the stock is moving with or against the market.`\n    }\n  ]\n};\n\nreturn { requestBody: requestBody };"
+      },
+      "id": "7ffab6cc-2fcf-4d50-a498-b3c34a322355",
+      "name": "Build Analyst Request",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1520,
+        592
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.requestBody) }}",
+        "options": {}
+      },
+      "id": "fbd27a4e-9080-4829-b842-b6b2731a7545",
+      "name": "Trading Analyst (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1760,
+        592
+      ],
+      "typeVersion": 4.2,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "eoHASyr9aPKm4qRl",
+          "name": "News API"
+        },
+        "anthropicApi": {
+          "id": "wTMqnFAChubo4ULX",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the final response for chat\nconst response = $input.first().json;\n\nlet output;\ntry {\n  output = response.content?.[0]?.text || 'Unable to generate analysis.';\n} catch (e) {\n  output = 'Error processing analysis response.';\n}\n\n// Add footer\noutput += '\\n\\n---\\n*Powered by Claude (Anthropic)*';\n\nreturn { output: output };"
+      },
+      "id": "378f1ca1-b51d-4b91-b6bb-b5194a78411b",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        2000,
+        592
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.output }}",
+        "options": {}
+      },
+      "id": "a87c7b87-754a-4f13-b8bb-319d29c71569",
+      "name": "Respond to Chat",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        2240,
+        592
+      ],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format response as JSON for API consumers\nconst response = $input.first().json;\nconst analysisText = response.content?.[0]?.text || '';\n\n// Extract trading signal from markdown\nlet signal = 'HOLD';\nlet confidence = 50;\nlet reasoning = '';\nlet entryPrice = null;\nlet stopLoss = null;\nlet takeProfit = null;\nlet positionSize = 'SMALL';\nlet timeHorizon = 'intraday';\nlet riskFactors = [];\n\n// Parse the verdict line\nconst verdictMatch = analysisText.match(/\\*\\*The Verdict:\\*\\*\\s*(BUY|SELL|HOLD)\\s*\\(Confidence:\\s*(\\d+)/i);\nif (verdictMatch) {\n  signal = verdictMatch[1].toUpperCase();\n  confidence = parseInt(verdictMatch[2]) * 10; // Convert X/10 to percentage\n}\n\n// Parse time horizon\nconst horizonMatch = analysisText.match(/\\*\\*Time Horizon:\\*\\*\\s*([^\\n]+)/i);\nif (horizonMatch) {\n  timeHorizon = horizonMatch[1].trim();\n}\n\n// Parse entry zone\nconst entryMatch = analysisText.match(/\\*\\*Entry Zone:\\*\\*\\s*\\$([\\d.]+)/i);\nif (entryMatch) {\n  entryPrice = parseFloat(entryMatch[1]);\n}\n\n// Parse stop loss\nconst stopMatch = analysisText.match(/\\*\\*Stop Loss:\\*\\*\\s*\\$([\\d.]+)/i);\nif (stopMatch) {\n  stopLoss = parseFloat(stopMatch[1]);\n}\n\n// Parse target\nconst targetMatch = analysisText.match(/\\*\\*Target 1:\\*\\*\\s*\\$([\\d.]+)/i);\nif (targetMatch) {\n  takeProfit = parseFloat(targetMatch[1]);\n}\n\n// Parse position sizing\nconst sizeMatch = analysisText.match(/\\*\\*Base Recommendation:\\*\\*\\s*([\\d.]+)%/i);\nif (sizeMatch) {\n  const pct = parseFloat(sizeMatch[1]);\n  if (pct >= 3) positionSize = 'LARGE';\n  else if (pct >= 2) positionSize = 'MEDIUM';\n  else positionSize = 'SMALL';\n}\n\n// Extract risk factors section\nconst riskSection = analysisText.match(/### Risk Factors([\\s\\S]*?)(?:###|$)/i);\nif (riskSection) {\n  const riskLines = riskSection[1].match(/\\*\\s*([^\\n]+)/g) || [];\n  riskFactors = riskLines.slice(0, 5).map(r => r.replace(/^\\*\\s*/, '').trim());\n}\n\n// Extract rationale section as reasoning\nconst rationaleSection = analysisText.match(/### Rationale([\\s\\S]*?)(?:### Trade Setup|$)/i);\nif (rationaleSection) {\n  reasoning = rationaleSection[1].replace(/\\*\\*/g, '').replace(/\\*/g, '').trim().substring(0, 500);\n}\n\nreturn {\n  success: true,\n  signal: signal,\n  confidence: Math.min(100, Math.max(0, confidence)),\n  reasoning: reasoning || 'See full analysis',\n  contrary_reasoning: '',\n  entry_price: entryPrice,\n  stop_loss: stopLoss,\n  take_profit: takeProfit,\n  position_size_recommendation: positionSize,\n  risk_factors: riskFactors,\n  time_horizon: timeHorizon,\n  full_analysis: analysisText\n};"
+      },
+      "id": "format-json-response",
+      "name": "Format JSON Response",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        2000,
+        200
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-to-api",
+      "name": "Respond to API",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        2240,
+        200
+      ],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "content": "## STOCK PRICE TREND\n* Fetch using TwelveData APIs\n* Get your free API Key from here: https://twelvedata.com/\n* Replace YOUR_TWELVEDATA_API_KEY in each node",
+        "height": 560,
+        "width": 384,
+        "color": 5
+      },
+      "id": "4474f5dd-3a05-4c01-a788-c659c73e95ad",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        0,
+        0
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## NEWS API\n* Get your free API key from here: https://newsapi.org/\n* Create HTTP Header Auth credential:\n  - Name: NewsAPI\n  - Header: X-Api-Key\n  - Value: Your API key",
+        "height": 240,
+        "width": 288,
+        "color": 4
+      },
+      "id": "e696aae6-29b0-4959-a503-00218d24272a",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        0,
+        704
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## ANTHROPIC (Claude) API\n* Get your API key from: https://console.anthropic.com/\n* Create HTTP Header Auth credential:\n  - Name: Anthropic API\n  - Header: x-api-key\n  - Value: Your API key",
+        "height": 200,
+        "width": 350,
+        "color": 6
+      },
+      "id": "b310fcb5-7951-44b5-92ef-f300eaae4622",
+      "name": "Sticky Note3",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -672,
+        624
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## API WEBHOOK ENDPOINT\n\n**URL:** POST /webhook/stock-analysis\n\n**Request Body:**\n```json\n{\"symbol\": \"AAPL\"}\n```\n\n**Response:** JSON with trading signal\n\nUsed by Python backend for AI Day Trading integration.",
+        "height": 240,
+        "width": 350,
+        "color": 7
+      },
+      "id": "api-webhook-note",
+      "name": "Sticky Note - API",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -672,
+        -80
+      ],
+      "typeVersion": 1
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Build Symbol Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Symbol from Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Symbol from Webhook": {
+      "main": [
+        [
+          {
+            "node": "4h trend",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1day trend",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1week trend",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get News",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "SPY Market Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "VIX Volatility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Symbol Request": {
+      "main": [
+        [
+          {
+            "node": "Convert to Stock Symbol",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to Stock Symbol": {
+      "main": [
+        [
+          {
+            "node": "Extract Symbol",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Symbol": {
+      "main": [
+        [
+          {
+            "node": "4h trend",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1day trend",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1week trend",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get News",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "SPY Market Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "VIX Volatility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4h trend": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1day trend": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "1week trend": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "SPY Market Data": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "VIX Volatility": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Process Technical Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Technical Data": {
+      "main": [
+        [
+          {
+            "node": "Merge News & Technical",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get News": {
+      "main": [
+        [
+          {
+            "node": "Build Sentiment Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sentiment Request": {
+      "main": [
+        [
+          {
+            "node": "News Sentiment Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "News Sentiment Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Parse News Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse News Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Merge News & Technical",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge News & Technical": {
+      "main": [
+        [
+          {
+            "node": "Prepare Analysis Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Analysis Data": {
+      "main": [
+        [
+          {
+            "node": "Build Analyst Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Analyst Request": {
+      "main": [
+        [
+          {
+            "node": "Trading Analyst (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trading Analyst (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Format JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format JSON Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "aeba9303-9123-47dc-a706-477a2c6c9752",
+  "meta": {
+    "instanceId": "f002ae3f815cd98e640063cea09418ea8501621b76dbf410f92cfad5418988e6"
+  },
+  "id": "rSb27ezDI3s3eim2oMxm1",
+  "tags": []
+}
