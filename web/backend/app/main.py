@@ -31,8 +31,12 @@ from strategy import MarketAnalyzer, TradingStrategy
 from strategy.portfolio_context import PortfolioContext
 from risk import RiskManager, RiskLimits
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging with timestamps
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s:%(name)s:%(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
 # Create FastAPI app
@@ -77,6 +81,7 @@ class TradingState:
             "signal": signal.signal,
             "confidence": signal.confidence,
             "reasoning": signal.reasoning,
+            "contrary_reasoning": signal.contrary_reasoning,
             "entry_price": signal.entry_price,
             "stop_loss": signal.stop_loss,
             "take_profit": signal.take_profit,
@@ -181,7 +186,12 @@ class TradingState:
         portfolio = PortfolioContext(self.broker, risk_manager)
 
         # Initialize trading strategy
-        strategy = TradingStrategy(llm_provider, market_analyzer, portfolio)
+        strategy = TradingStrategy(
+            llm_provider,
+            market_analyzer,
+            portfolio,
+            enable_critique=self.settings.enable_ai_critique
+        )
 
         # Store components in a simple object
         class SimpleTradingBot:
@@ -700,6 +710,7 @@ async def get_settings():
         "scan_interval_minutes": state.settings.scan_interval_minutes,
         "min_confidence_threshold": state.settings.min_confidence_threshold,
         "close_positions_at_session_end": state.settings.close_positions_at_session_end,
+        "enable_ai_critique": state.settings.enable_ai_critique,
         # Include API keys (masked for security, empty string means not configured)
         "alpaca_api_key": _mask_api_key(state.settings.alpaca_api_key),
         "alpaca_secret_key": _mask_api_key(state.settings.alpaca_secret_key),
@@ -751,6 +762,7 @@ async def update_settings(updated_settings: dict):
                     'scan_interval_minutes': 'SCAN_INTERVAL_MINUTES',
                     'min_confidence_threshold': 'MIN_CONFIDENCE_THRESHOLD',
                     'close_positions_at_session_end': 'CLOSE_POSITIONS_AT_SESSION_END',
+                    'enable_ai_critique': 'ENABLE_AI_CRITIQUE',
                     'alpaca_api_key': 'ALPACA_API_KEY',
                     'alpaca_secret_key': 'ALPACA_SECRET_KEY',
                     'anthropic_api_key': 'ANTHROPIC_API_KEY',
@@ -802,6 +814,7 @@ async def update_settings(updated_settings: dict):
             'scan_interval_minutes': 'SCAN_INTERVAL_MINUTES',
             'min_confidence_threshold': 'MIN_CONFIDENCE_THRESHOLD',
             'close_positions_at_session_end': 'CLOSE_POSITIONS_AT_SESSION_END',
+            'enable_ai_critique': 'ENABLE_AI_CRITIQUE',
             'alpaca_api_key': 'ALPACA_API_KEY',
             'alpaca_secret_key': 'ALPACA_SECRET_KEY',
             'anthropic_api_key': 'ANTHROPIC_API_KEY',
@@ -888,19 +901,19 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
             # (i.e., there won't be another full scan interval before market closes)
             if market_is_open and state.settings.close_positions_at_session_end:
                 minutes_until_close = state.trading_bot.broker.get_minutes_until_close()
-                scan_interval = state.settings.scan_interval_minutes
+                scan_interval_minutes = state.settings.scan_interval_minutes
 
                 # Close if time remaining is less than the scan interval
                 # This ensures we close on the last possible scan while market is still open
-                if minutes_until_close is not None and minutes_until_close <= scan_interval:
+                if minutes_until_close is not None and minutes_until_close <= scan_interval_minutes:
                     # Check if we haven't already closed positions this session
                     if not getattr(state, '_positions_closed_today', False):
-                        logger.info(f"Market closing in {minutes_until_close} minutes (scan interval: {scan_interval}m) - this is the last scan, closing all positions")
+                        logger.info(f"Market closing in {minutes_until_close} minutes (scan interval: {scan_interval_minutes}m) - this is the last scan, closing all positions")
                         await manager.broadcast({
                             "type": "session_closing",
                             "message": f"Market closing in {minutes_until_close} minutes - closing all positions on final scan",
                             "minutes_remaining": minutes_until_close,
-                            "scan_interval": scan_interval,
+                            "scan_interval": scan_interval_minutes,
                             "timestamp": datetime.now().isoformat()
                         })
 
@@ -911,6 +924,24 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
                             # Calculate total P&L from closed positions
                             total_pnl = sum(r.get("pnl", 0) for r in results if r.get("status") == "closed")
                             closed_count = len([r for r in results if r.get("status") == "closed"])
+
+                            # Record each closed position as a trade in the daily report
+                            for result in results:
+                                if result.get("status") == "closed":
+                                    # Determine side: if we were long, we sell to close; if short, we buy to close
+                                    position_side = result.get("side", "").lower()
+                                    close_side = "sell" if position_side == "long" else "buy"
+
+                                    state.report_manager.record_trade({
+                                        "symbol": result.get("symbol", ""),
+                                        "side": close_side,
+                                        "quantity": result.get("quantity", 0),
+                                        "price": result.get("close_price", result.get("price", 0)),
+                                        "signal_confidence": 100,  # End of session closure
+                                        "llm_provider": "system",
+                                        "reasoning": "End of session automatic position closure",
+                                        "realized_pnl": result.get("pnl", 0),
+                                    })
 
                             await manager.broadcast({
                                 "type": "positions_closed",
@@ -928,6 +959,10 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
                                 "message": f"Error closing positions: {str(e)}",
                                 "timestamp": datetime.now().isoformat()
                             })
+
+                        # Capture market close snapshot AFTER positions are closed
+                        logger.info("Capturing market close snapshot")
+                        state.report_manager.capture_snapshot("market_close")
 
                         # Stop the bot after closing positions at end of session
                         logger.info("End of session - stopping bot. Restart manually tomorrow.")
@@ -1035,6 +1070,7 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
                             "signal": signal.signal,
                             "confidence": signal.confidence,
                             "reasoning": signal.reasoning,
+                            "contrary_reasoning": signal.contrary_reasoning,
                             "entry_price": signal.entry_price,
                             "stop_loss": signal.stop_loss,
                             "take_profit": signal.take_profit,
@@ -1044,7 +1080,16 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
                             "llm_provider": signal.llm_provider,
                             "is_actionable": is_actionable,
                             "stock_sentiment": stock_sentiment_data,
-                            "timestamp": datetime.now().isoformat()
+                            "timestamp": datetime.now().isoformat(),
+                            # Debate data (if AI debate/critique is enabled)
+                            "bull_case": signal.bull_case,
+                            "bull_signals": signal.bull_signals,
+                            "bull_confidence": signal.bull_confidence,
+                            "bear_case": signal.bear_case,
+                            "bear_signals": signal.bear_signals,
+                            "bear_confidence": signal.bear_confidence,
+                            "judge_reasoning": signal.judge_reasoning,
+                            "winning_case": signal.winning_case,
                         }
 
                         all_analyses.append(analysis_data)

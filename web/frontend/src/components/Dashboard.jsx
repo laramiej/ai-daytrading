@@ -397,6 +397,13 @@ const Dashboard = () => {
                     }`}>
                       Close at EOD: {settings.close_positions_at_session_end ? 'ON' : 'OFF'}
                     </div>
+                    <div className={`px-3 py-1.5 rounded-full text-xs font-medium ${
+                      settings.enable_ai_critique
+                        ? 'bg-cyan-900/30 text-cyan-400 border border-cyan-700'
+                        : 'bg-slate-700 text-slate-400 border border-slate-600'
+                    }`}>
+                      AI Critique: {settings.enable_ai_critique ? 'ON' : 'OFF'}
+                    </div>
                     <div className="px-3 py-1.5 rounded-full text-xs font-medium bg-purple-900/30 text-purple-400 border border-purple-700">
                       Scan: Every {settings.scan_interval_minutes || 5} min
                     </div>

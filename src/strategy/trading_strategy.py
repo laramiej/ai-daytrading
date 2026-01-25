@@ -4,6 +4,7 @@ Uses LLM to analyze market data and generate trading signals
 """
 import json
 import logging
+import re
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,12 +27,22 @@ class TradingSignal:
     time_horizon: str
     timestamp: datetime
     llm_provider: str
+    contrary_reasoning: Optional[str] = None  # Why the opposite signal is wrong
+    # Debate data (populated when enable_ai_critique/debate is True)
+    bull_case: Optional[str] = None  # The bull's argument for buying
+    bull_signals: Optional[List[str]] = None  # Key bullish signals identified
+    bull_confidence: Optional[float] = None  # Bull's confidence in BUY
+    bear_case: Optional[str] = None  # The bear's argument for selling
+    bear_signals: Optional[List[str]] = None  # Key bearish signals identified
+    bear_confidence: Optional[float] = None  # Bear's confidence in SELL
+    judge_reasoning: Optional[str] = None  # The judge's reasoning for the final decision
+    winning_case: Optional[str] = None  # "BULL", "BEAR", or "NEITHER"
 
 
 class TradingStrategy:
     """AI-powered trading strategy using LLM analysis"""
 
-    def __init__(self, llm_provider, market_analyzer, portfolio_context=None):
+    def __init__(self, llm_provider, market_analyzer, portfolio_context=None, enable_critique: bool = False):
         """
         Initialize trading strategy
 
@@ -39,10 +50,12 @@ class TradingStrategy:
             llm_provider: LLM provider instance
             market_analyzer: Market analyzer instance
             portfolio_context: Optional portfolio context for portfolio-aware trading
+            enable_critique: Whether to run a second AI call to critique recommendations
         """
         self.llm_provider = llm_provider
         self.market_analyzer = market_analyzer
         self.portfolio_context = portfolio_context
+        self.enable_critique = enable_critique
         self.signal_history = []
 
     def analyze_symbol(
@@ -147,31 +160,191 @@ class TradingStrategy:
 
                 context = "\n".join(context_parts)
 
-            # Get LLM analysis
-            logger.info(f"Sending analysis request to {self.llm_provider.provider_name}...")
-            response = self.llm_provider.analyze_market_data(
-                market_data=market_data,
-                context=context
-            )
+            # Choose analysis method based on critique/debate setting
+            if self.enable_critique:
+                # Use Bull/Bear/Judge debate system (3 AI calls)
+                logger.info(f"🎭 Using DEBATE system for {symbol} (Bull vs Bear vs Judge)")
+                signal = self._run_debate(symbol, market_data)
+            else:
+                # Use single AI call (original method)
+                logger.info(f"Sending analysis request to {self.llm_provider.provider_name}...")
+                response = self.llm_provider.analyze_market_data(
+                    market_data=market_data,
+                    context=context
+                )
 
-            # Parse the JSON response
-            signal = self._parse_llm_response(
-                response.content,
-                symbol,
-                self.llm_provider.provider_name
-            )
+                # Parse the JSON response
+                signal = self._parse_llm_response(
+                    response.content,
+                    symbol,
+                    self.llm_provider.provider_name
+                )
 
             if signal:
-                self.signal_history.append(signal)
-
                 # Log AI output summary
                 self._log_signal_summary(signal)
+                self.signal_history.append(signal)
 
             return signal
 
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {e}")
             return None
+
+    def _run_debate(self, symbol: str, market_data: Dict[str, Any]) -> Optional[TradingSignal]:
+        """
+        Run the bull/bear/judge debate system for a symbol.
+
+        This replaces the old critique system with a more balanced approach:
+        1. Bull AI argues for buying
+        2. Bear AI argues for selling
+        3. Judge AI decides: BUY, SELL, or HOLD
+
+        Args:
+            symbol: Stock symbol being analyzed
+            market_data: Market data for the symbol
+
+        Returns:
+            TradingSignal based on the judge's decision, or None if debate fails
+        """
+        try:
+            provider = self.llm_provider.provider_name
+
+            # Step 1: Get Bull Case
+            logger.info(f"🐂 Getting BULL case for {symbol}...")
+            bull_response = self.llm_provider.make_bull_case(market_data)
+            bull_data = self._parse_debate_json(bull_response.content, "BULL")
+
+            logger.info("=" * 70)
+            logger.info(f"🐂 BULL CASE FOR {symbol}")
+            logger.info("=" * 70)
+            logger.info(f"📈 Argument: {bull_data.get('bull_case', 'N/A')}")
+            logger.info(f"📊 Bullish Signals: {bull_data.get('key_bullish_signals', [])}")
+            logger.info(f"💪 Bull Confidence: {bull_data.get('confidence', 0)}%")
+            logger.info("=" * 70)
+
+            # Step 2: Get Bear Case
+            logger.info(f"🐻 Getting BEAR case for {symbol}...")
+            bear_response = self.llm_provider.make_bear_case(market_data)
+            bear_data = self._parse_debate_json(bear_response.content, "BEAR")
+
+            logger.info("=" * 70)
+            logger.info(f"🐻 BEAR CASE FOR {symbol}")
+            logger.info("=" * 70)
+            logger.info(f"📉 Argument: {bear_data.get('bear_case', 'N/A')}")
+            logger.info(f"📊 Bearish Signals: {bear_data.get('key_bearish_signals', [])}")
+            logger.info(f"💪 Bear Confidence: {bear_data.get('confidence', 0)}%")
+            logger.info("=" * 70)
+
+            # Step 3: Judge decides
+            logger.info(f"⚖️ JUDGE evaluating {symbol}...")
+            judge_response = self.llm_provider.judge_debate(bull_data, bear_data, market_data)
+            judge_data = self._parse_debate_json(judge_response.content, "JUDGE")
+
+            decision = judge_data.get('decision', 'HOLD').upper()
+            confidence = float(judge_data.get('confidence', 50))
+            winning_case = judge_data.get('winning_case', 'NEITHER')
+
+            logger.info("=" * 70)
+            logger.info(f"⚖️ JUDGE DECISION FOR {symbol}")
+            logger.info("=" * 70)
+            logger.info(f"🎯 Decision: {decision}")
+            logger.info(f"📊 Confidence: {confidence}%")
+            logger.info(f"🏆 Winning Case: {winning_case}")
+            logger.info(f"💭 Reasoning: {judge_data.get('reasoning', 'N/A')}")
+            logger.info("=" * 70)
+
+            # Build risk factors from both cases' signals
+            risk_factors = []
+            if decision == 'BUY':
+                # If buying, bear signals are risk factors
+                risk_factors = bear_data.get('key_bearish_signals', [])[:3]
+            elif decision == 'SELL':
+                # If selling, bull signals are risk factors
+                risk_factors = bull_data.get('key_bullish_signals', [])[:3]
+            else:
+                # If holding, both are considerations
+                risk_factors = ["Mixed signals - no clear direction"]
+
+            # Add any risk factors from judge
+            risk_factors.extend(judge_data.get('risk_factors', []))
+
+            return TradingSignal(
+                symbol=symbol,
+                signal=decision,
+                confidence=confidence,
+                reasoning=judge_data.get('reasoning', 'Judge decision based on bull/bear debate'),
+                entry_price=judge_data.get('entry_price'),
+                stop_loss=judge_data.get('stop_loss'),
+                take_profit=judge_data.get('take_profit'),
+                position_size_recommendation=judge_data.get('position_size', 'MEDIUM'),
+                risk_factors=risk_factors,
+                time_horizon=judge_data.get('time_horizon', 'HOURS'),
+                timestamp=datetime.now(),
+                llm_provider=provider,
+                contrary_reasoning=None,  # Not used in debate system
+                # Debate data
+                bull_case=bull_data.get('bull_case'),
+                bull_signals=bull_data.get('key_bullish_signals', []),
+                bull_confidence=bull_data.get('confidence'),
+                bear_case=bear_data.get('bear_case'),
+                bear_signals=bear_data.get('key_bearish_signals', []),
+                bear_confidence=bear_data.get('confidence'),
+                judge_reasoning=judge_data.get('reasoning'),
+                winning_case=winning_case
+            )
+
+        except Exception as e:
+            logger.error(f"Error running debate for {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _extract_json(self, text: str) -> str:
+        """Extract JSON from LLM response that may contain markdown code blocks."""
+        text = text.strip()
+
+        # Try to extract from markdown code blocks first
+        if "```json" in text:
+            start = text.find("```json") + 7
+            end = text.find("```", start)
+            if end > start:
+                return text[start:end].strip()
+        elif "```" in text:
+            start = text.find("```") + 3
+            end = text.find("```", start)
+            if end > start:
+                return text[start:end].strip()
+
+        # Try to find JSON object directly (starts with { ends with })
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if json_match:
+            return json_match.group(0)
+
+        return text
+
+    def _parse_debate_json(self, text: str, stage: str) -> Dict[str, Any]:
+        """Parse JSON from debate response with better error handling."""
+        try:
+            json_str = self._extract_json(text)
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error in {stage}: {e}")
+            logger.error(f"Raw response (first 500 chars): {text[:500]}")
+
+            # Try to fix common JSON issues
+            json_str = self._extract_json(text)
+
+            # Fix trailing commas
+            json_str = re.sub(r',\s*}', '}', json_str)
+            json_str = re.sub(r',\s*]', ']', json_str)
+
+            # Try again
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                logger.error(f"Could not parse JSON even after fixes. Extracted JSON: {json_str[:500]}")
+                raise
 
     def analyze_watchlist(
         self,
@@ -266,7 +439,8 @@ class TradingStrategy:
                 risk_factors=data.get("risk_factors", []),
                 time_horizon=data.get("time_horizon", "intraday"),
                 timestamp=datetime.now(),
-                llm_provider=provider
+                llm_provider=provider,
+                contrary_reasoning=data.get("contrary_reasoning")
             )
 
         except json.JSONDecodeError as e:
@@ -439,6 +613,11 @@ class TradingStrategy:
         # Reasoning
         logger.info(f"💭 REASONING:")
         logger.info(f"   {signal.reasoning}")
+
+        # Contrary reasoning (why not the opposite signal)
+        if signal.contrary_reasoning:
+            logger.info(f"🔄 WHY NOT THE OPPOSITE:")
+            logger.info(f"   {signal.contrary_reasoning}")
 
         # Price targets
         if signal.entry_price:

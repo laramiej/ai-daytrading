@@ -71,6 +71,216 @@ class BaseLLMProvider(ABC):
         """
         pass
 
+    def critique_signal(
+        self,
+        signal_data: Dict[str, Any],
+        market_data: Dict[str, Any]
+    ) -> LLMResponse:
+        """
+        Critique a trading signal with a second AI call.
+
+        This acts as a devil's advocate to challenge the original recommendation.
+
+        Args:
+            signal_data: The original signal (signal, reasoning, confidence, etc.)
+            market_data: The market data used for the original analysis
+
+        Returns:
+            LLMResponse with critique and potentially adjusted recommendation
+        """
+        formatted_market = self.format_market_data(market_data)
+
+        critique_prompt = f"""You are a SKEPTICAL trading risk analyst. Your job is to CHALLENGE trading recommendations and find flaws in the reasoning.
+
+ORIGINAL RECOMMENDATION:
+- Signal: {signal_data.get('signal', 'UNKNOWN')}
+- Confidence: {signal_data.get('confidence', 0)}%
+- Reasoning: {signal_data.get('reasoning', 'No reasoning provided')}
+- Contrary Reasoning: {signal_data.get('contrary_reasoning', 'None provided')}
+
+MARKET DATA:
+{formatted_market}
+
+YOUR TASK:
+1. CHALLENGE the recommendation - what could go wrong?
+2. Identify any indicators that CONTRADICT the recommendation
+3. Consider if the opposite trade might actually be better
+4. Evaluate if the confidence level is justified
+
+Respond with valid JSON:
+{{
+  "critique": "Your detailed critique of the recommendation",
+  "contradicting_indicators": ["list of indicators that contradict the recommendation"],
+  "recommendation_valid": true or false,
+  "adjusted_confidence": 0-100 (your adjusted confidence, may be lower or higher),
+  "better_alternative": "BUY" | "SELL" | "HOLD" | "NONE" (if you think a different signal is better, or NONE if original is fine),
+  "alternative_reasoning": "If you suggested a better alternative, explain why"
+}}
+
+Be tough but fair. If the recommendation is solid, say so. If it has flaws, expose them."""
+
+        return self.generate_response(
+            prompt=critique_prompt,
+            system_prompt="You are a skeptical trading risk analyst who challenges recommendations.",
+            temperature=0.4,
+            max_tokens=1000
+        )
+
+    def make_bull_case(self, market_data: Dict[str, Any]) -> LLMResponse:
+        """
+        Make the strongest possible case for BUYING this stock.
+        First part of the bull/bear/judge debate system.
+        """
+        formatted_market = self.format_market_data(market_data)
+        symbol = market_data.get('symbol', 'UNKNOWN')
+
+        bull_prompt = f"""You are a BULLISH stock analyst. Your job is to make the STRONGEST possible case for BUYING {symbol} RIGHT NOW.
+
+MARKET DATA:
+{formatted_market}
+
+YOUR TASK:
+Act as a passionate bull advocate. Find EVERY reason to BUY this stock for a day trade:
+1. Identify ALL bullish technical signals (momentum, breakouts, support levels holding)
+2. Highlight positive price action and volume patterns
+3. Point out any bullish divergences or setups
+4. Consider favorable market sentiment or news
+5. Explain why NOW is a good entry point
+
+You MUST argue for buying even if signals are mixed - find the bull case!
+
+Respond with ONLY valid JSON (no other text):
+{{
+  "bull_case": "Your 2-3 sentence argument for buying",
+  "key_bullish_signals": ["signal1", "signal2", "signal3"],
+  "proposed_entry": 150.00,
+  "proposed_stop_loss": 145.00,
+  "proposed_take_profit": 160.00,
+  "confidence": 75
+}}
+
+IMPORTANT: Keep bull_case SHORT (2-3 sentences max). Use actual numbers for prices. Your job is to advocate for buying."""
+
+        return self.generate_response(
+            prompt=bull_prompt,
+            system_prompt="You are a bullish stock analyst. Respond with ONLY valid JSON, no other text.",
+            temperature=0.3,
+            max_tokens=800
+        )
+
+    def make_bear_case(self, market_data: Dict[str, Any]) -> LLMResponse:
+        """
+        Make the strongest possible case for SELLING this stock.
+        Second part of the bull/bear/judge debate system.
+        """
+        formatted_market = self.format_market_data(market_data)
+        symbol = market_data.get('symbol', 'UNKNOWN')
+
+        bear_prompt = f"""You are a BEARISH stock analyst. Your job is to make the STRONGEST possible case for SELLING/SHORTING {symbol} RIGHT NOW.
+
+MARKET DATA:
+{formatted_market}
+
+YOUR TASK:
+Act as a passionate bear advocate. Find EVERY reason to SELL or SHORT this stock for a day trade:
+1. Identify ALL bearish technical signals (overbought conditions, breakdowns, resistance rejections)
+2. Highlight negative price action and volume patterns
+3. Point out any bearish divergences or warning signs
+4. Consider negative market sentiment or risks
+5. Explain why the stock is likely to go DOWN from here
+
+You MUST argue for selling even if signals are mixed - find the bear case!
+
+Respond with ONLY valid JSON (no other text):
+{{
+  "bear_case": "Your 2-3 sentence argument for selling",
+  "key_bearish_signals": ["signal1", "signal2", "signal3"],
+  "proposed_entry": 150.00,
+  "proposed_stop_loss": 155.00,
+  "proposed_take_profit": 140.00,
+  "confidence": 75
+}}
+
+IMPORTANT: Keep bear_case SHORT (2-3 sentences max). Use actual numbers for prices. Your job is to advocate for selling."""
+
+        return self.generate_response(
+            prompt=bear_prompt,
+            system_prompt="You are a bearish stock analyst. Respond with ONLY valid JSON, no other text.",
+            temperature=0.3,
+            max_tokens=800
+        )
+
+    def judge_debate(
+        self,
+        bull_case: Dict[str, Any],
+        bear_case: Dict[str, Any],
+        market_data: Dict[str, Any]
+    ) -> LLMResponse:
+        """
+        Judge the bull vs bear debate and make the final trading decision.
+        Third part of the bull/bear/judge debate system.
+        """
+        formatted_market = self.format_market_data(market_data)
+        symbol = market_data.get('symbol', 'UNKNOWN')
+
+        judge_prompt = f"""You are a SKEPTICAL and IMPARTIAL trading judge. You've heard both the bull and bear cases for {symbol}.
+Your job is to make the FINAL DECISION: BUY, SELL, or HOLD.
+
+BEAR CASE (Advocate for SELLING/SHORTING):
+{bear_case.get('bear_case', 'No bear case provided')}
+Key Bearish Signals: {bear_case.get('key_bearish_signals', [])}
+Bear Confidence: {bear_case.get('confidence', 0)}%
+
+BULL CASE (Advocate for BUYING):
+{bull_case.get('bull_case', 'No bull case provided')}
+Key Bullish Signals: {bull_case.get('key_bullish_signals', [])}
+Bull Confidence: {bull_case.get('confidence', 0)}%
+
+MARKET DATA (for your reference):
+{formatted_market}
+
+CRITICAL JUDGING CRITERIA:
+1. You are naturally SKEPTICAL - the default should be HOLD unless one side is clearly stronger
+2. A trade needs STRONG conviction to be worth the risk - weak cases = HOLD
+3. Consider the RISK first: what happens if the trade goes wrong?
+4. The higher confidence case doesn't automatically win - evaluate the QUALITY of arguments
+5. Day trading is risky - when in doubt, HOLD
+
+You should HOLD (and this should be your most common decision) if:
+- Both cases are within 15% confidence of each other
+- Neither case has overwhelming technical evidence
+- The risk/reward ratio is not clearly favorable (at least 1.5:1)
+- You have any significant doubts about the trade
+
+You should only choose BUY or SELL if:
+- One case has clearly superior technical evidence
+- The confidence gap is significant (>20%)
+- The risk/reward is clearly favorable
+- You are highly confident in the direction
+
+Respond with ONLY valid JSON (no other text):
+{{
+  "decision": "HOLD",
+  "reasoning": "2-3 sentence explanation",
+  "winning_case": "NEITHER",
+  "confidence": 50,
+  "entry_price": null,
+  "stop_loss": null,
+  "take_profit": null,
+  "position_size": "SMALL",
+  "time_horizon": "HOURS",
+  "risk_factors": ["risk1", "risk2"]
+}}
+
+Use "BUY", "SELL", or "HOLD" for decision. Use "BULL", "BEAR", or "NEITHER" for winning_case. For BUY/SELL use actual price numbers; for HOLD use null."""
+
+        return self.generate_response(
+            prompt=judge_prompt,
+            system_prompt="You are an impartial trading judge. Respond with ONLY valid JSON, no other text.",
+            temperature=0.3,
+            max_tokens=800
+        )
+
     def format_market_data(self, market_data: Dict[str, Any]) -> str:
         """
         Format market data into a readable prompt for DAY TRADING analysis.

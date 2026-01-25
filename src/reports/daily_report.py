@@ -345,3 +345,311 @@ class DailyReportManager:
             "has_open_snapshot": report.market_open_snapshot is not None,
             "has_close_snapshot": report.market_close_snapshot is not None,
         }
+
+    def generate_pdf(self, date_str: str) -> Optional[bytes]:
+        """Generate a PDF report for the given date
+
+        Returns:
+            PDF file content as bytes, or None if report not found
+        """
+        from io import BytesIO
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+            HRFlowable, KeepTogether, PageBreak
+        )
+
+        report = self.load_report(date_str)
+        if not report:
+            return None
+
+        buffer = BytesIO()
+        # Letter size is 8.5 x 11 inches, use 0.5 inch margins on all sides
+        # Available width = 8.5 - 1.0 = 7.5 inches
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=letter,
+            topMargin=0.5*inch,
+            bottomMargin=0.5*inch,
+            leftMargin=0.5*inch,
+            rightMargin=0.5*inch
+        )
+        available_width = 7.5 * inch
+        styles = getSampleStyleSheet()
+
+        # Custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            spaceAfter=12,
+            textColor=colors.HexColor('#1e3a5f')
+        )
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceBefore=16,
+            spaceAfter=8,
+            textColor=colors.HexColor('#2d5a87')
+        )
+
+        elements = []
+
+        # Title
+        elements.append(Paragraph("Daily Trading Report", title_style))
+        elements.append(Paragraph(f"Date: {report.date}", styles['Normal']))
+        elements.append(Spacer(1, 12))
+        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#cccccc')))
+        elements.append(Spacer(1, 12))
+
+        # Summary Section - use KeepTogether to prevent page break in middle
+        summary_elements = []
+        summary_elements.append(Paragraph("Summary", heading_style))
+
+        summary_data = [
+            ['Total P&L', f"${report.total_pnl:,.2f}"],
+            ['Realized P&L', f"${report.realized_pnl:,.2f}"],
+            ['Unrealized P&L', f"${report.unrealized_pnl:,.2f}"],
+            ['Trades Executed', str(report.trade_count)],
+            ['Signals Analyzed', str(report.signals_analyzed)],
+            ['Win Rate', f"{report.win_rate:.1f}%"],
+            ['Wins / Losses', f"{report.win_count} / {report.loss_count}"],
+        ]
+
+        summary_table = Table(summary_data, colWidths=[2.5*inch, 2.5*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f3f4f6')),
+            ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
+        ]))
+        summary_elements.append(summary_table)
+        summary_elements.append(Spacer(1, 16))
+        elements.append(KeepTogether(summary_elements))
+
+        # Portfolio Snapshots Section
+        def format_snapshot(snapshot: PortfolioSnapshot, label: str):
+            """Format a portfolio snapshot for the PDF"""
+            snapshot_elements = []
+            snapshot_elements.append(Paragraph(label, heading_style))
+
+            if snapshot is None:
+                snapshot_elements.append(Paragraph("No snapshot captured", styles['Normal']))
+                snapshot_elements.append(Spacer(1, 12))
+                return KeepTogether(snapshot_elements)
+
+            # Parse timestamp for display
+            try:
+                ts = datetime.fromisoformat(snapshot.timestamp)
+                time_str = ts.strftime("%I:%M %p")
+            except:
+                time_str = snapshot.timestamp
+
+            snapshot_data = [
+                ['Time', time_str],
+                ['Portfolio Value', f"${snapshot.portfolio_value:,.2f}"],
+                ['Cash', f"${snapshot.cash:,.2f}"],
+                ['Equity', f"${snapshot.equity:,.2f}"],
+                ['Buying Power', f"${snapshot.buying_power:,.2f}"],
+                ['Open Positions', str(snapshot.total_positions)],
+                ['Current Exposure', f"${snapshot.current_exposure:,.2f}"],
+            ]
+
+            snap_table = Table(snapshot_data, colWidths=[2.5*inch, 2.5*inch])
+            snap_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f3f4f6')),
+                ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
+            ]))
+            snapshot_elements.append(snap_table)
+
+            # Positions table if any
+            if snapshot.positions:
+                snapshot_elements.append(Spacer(1, 8))
+                snapshot_elements.append(Paragraph("Positions:", styles['Normal']))
+
+                pos_header = ['Symbol', 'Side', 'Qty', 'Entry', 'Current', 'P&L']
+                pos_data = [pos_header]
+
+                for pos in snapshot.positions:
+                    pnl_str = f"${pos.unrealized_pnl:,.2f}" if pos.unrealized_pnl >= 0 else f"-${abs(pos.unrealized_pnl):,.2f}"
+                    pos_data.append([
+                        pos.symbol,
+                        pos.side.upper(),
+                        f"{pos.quantity:.0f}",
+                        f"${pos.entry_price:,.2f}",
+                        f"${pos.current_price:,.2f}",
+                        pnl_str,
+                    ])
+
+                # Calculate column widths to fit within available width
+                pos_col_widths = [0.9*inch, 0.7*inch, 0.6*inch, 1.1*inch, 1.1*inch, 1.1*inch]
+                pos_table = Table(pos_data, colWidths=pos_col_widths)
+                pos_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a5f')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                    ('TOPPADDING', (0, 0), (-1, -1), 6),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9fafb')]),
+                ]))
+                snapshot_elements.append(pos_table)
+
+            snapshot_elements.append(Spacer(1, 12))
+            return KeepTogether(snapshot_elements)
+
+        elements.append(format_snapshot(report.market_open_snapshot, "Market Open Snapshot"))
+        elements.append(format_snapshot(report.market_close_snapshot, "Market Close Snapshot"))
+
+        # Trades Section - handle tables that might be long
+        elements.append(Paragraph("Executed Trades", heading_style))
+
+        if report.trades:
+            trade_header = ['Time', 'Symbol', 'Side', 'Qty', 'Price', 'Value', 'Conf', 'P&L']
+
+            # Column widths that fit within 7.5 inches
+            # Time=0.75, Symbol=0.7, Side=0.5, Qty=0.6, Price=1.0, Value=1.1, Conf=0.6, P&L=1.0 = 6.25
+            trade_col_widths = [0.8*inch, 0.75*inch, 0.5*inch, 0.55*inch, 0.95*inch, 1.05*inch, 0.55*inch, 0.95*inch]
+
+            # For long tables, split into chunks to allow page breaks with repeated headers
+            max_rows_per_chunk = 15
+            trade_chunks = []
+            for i in range(0, len(report.trades), max_rows_per_chunk):
+                chunk = report.trades[i:i + max_rows_per_chunk]
+                trade_chunks.append(chunk)
+
+            for chunk_idx, chunk in enumerate(trade_chunks):
+                trade_data = [trade_header]
+
+                for trade in chunk:
+                    try:
+                        ts = datetime.fromisoformat(trade.timestamp)
+                        time_str = ts.strftime("%I:%M %p")
+                    except:
+                        time_str = trade.timestamp[:8] if len(trade.timestamp) > 8 else trade.timestamp
+
+                    pnl_str = "-"
+                    if trade.realized_pnl is not None:
+                        pnl_str = f"${trade.realized_pnl:,.2f}" if trade.realized_pnl >= 0 else f"-${abs(trade.realized_pnl):,.2f}"
+
+                    trade_data.append([
+                        time_str,
+                        trade.symbol,
+                        trade.side.upper(),
+                        f"{trade.quantity:.0f}",
+                        f"${trade.price:,.2f}",
+                        f"${trade.total_value:,.2f}",
+                        f"{trade.signal_confidence:.0f}%",
+                        pnl_str,
+                    ])
+
+                trade_table = Table(trade_data, colWidths=trade_col_widths, repeatRows=1)
+                trade_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a5f')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                    ('TOPPADDING', (0, 0), (-1, -1), 6),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9fafb')]),
+                ]))
+
+                # Use KeepTogether for small tables, otherwise let it flow
+                if len(chunk) <= 8:
+                    elements.append(KeepTogether([trade_table]))
+                else:
+                    elements.append(trade_table)
+
+                if chunk_idx < len(trade_chunks) - 1:
+                    elements.append(Spacer(1, 8))
+        else:
+            elements.append(Paragraph("No trades executed on this day.", styles['Normal']))
+
+        elements.append(Spacer(1, 16))
+
+        # Blocked Trades Section (if any)
+        if report.blocked_trades:
+            blocked_elements = []
+            blocked_elements.append(Paragraph("Blocked Trades", heading_style))
+
+            blocked_header = ['Time', 'Symbol', 'Side', 'Qty', 'Reason']
+            blocked_data = [blocked_header]
+
+            for trade in report.blocked_trades:
+                try:
+                    ts = datetime.fromisoformat(trade.timestamp)
+                    time_str = ts.strftime("%I:%M %p")
+                except:
+                    time_str = trade.timestamp[:8] if len(trade.timestamp) > 8 else trade.timestamp
+
+                # Truncate long reasons
+                reason = trade.block_reason or "Unknown"
+                if len(reason) > 50:
+                    reason = reason[:47] + "..."
+
+                blocked_data.append([
+                    time_str,
+                    trade.symbol,
+                    trade.side.upper(),
+                    f"{trade.quantity:.0f}",
+                    reason,
+                ])
+
+            # Column widths: Time=0.8, Symbol=0.7, Side=0.5, Qty=0.6, Reason=3.5 = 6.1
+            blocked_col_widths = [0.8*inch, 0.7*inch, 0.55*inch, 0.55*inch, 3.4*inch]
+            blocked_table = Table(blocked_data, colWidths=blocked_col_widths, repeatRows=1)
+            blocked_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#7f1d1d')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (3, -1), 'CENTER'),
+                ('ALIGN', (4, 1), (4, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e5e7eb')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#fef2f2')]),
+            ]))
+            blocked_elements.append(blocked_table)
+
+            # Use KeepTogether if small enough
+            if len(report.blocked_trades) <= 8:
+                elements.append(KeepTogether(blocked_elements))
+            else:
+                elements.extend(blocked_elements)
+
+        # Footer
+        elements.append(Spacer(1, 24))
+        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#cccccc')))
+        elements.append(Spacer(1, 8))
+        elements.append(Paragraph(
+            f"Generated: {datetime.now().strftime('%Y-%m-%d %I:%M %p')} | AI Day Trading System",
+            ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.gray)
+        ))
+
+        # Build PDF
+        doc.build(elements)
+
+        pdf_bytes = buffer.getvalue()
+        buffer.close()
+
+        logger.info(f"Generated PDF report for {date_str} ({len(pdf_bytes)} bytes)")
+        return pdf_bytes

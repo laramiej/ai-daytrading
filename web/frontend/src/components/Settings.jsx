@@ -520,6 +520,40 @@ const Settings = () => {
             </div>
           </div>
 
+          <div className="mt-4 space-y-3">
+            <label className="flex items-center space-x-3">
+              <input
+                type="checkbox"
+                checked={formData.close_positions_at_session_end || false}
+                onChange={(e) => handleInputChange('close_positions_at_session_end', e.target.checked)}
+                className="w-5 h-5 bg-slate-900 border-slate-600 rounded focus:ring-blue-500"
+              />
+              <span className="text-sm text-slate-300">
+                Close All Positions at Market Close
+              </span>
+            </label>
+            <p className="text-xs text-slate-500 ml-8">
+              When enabled, all open positions will be automatically closed when the market closes for the day.
+              This ensures you don't hold overnight positions.
+            </p>
+
+            <label className="flex items-center space-x-3 pt-2">
+              <input
+                type="checkbox"
+                checked={formData.enable_ai_critique || false}
+                onChange={(e) => handleInputChange('enable_ai_critique', e.target.checked)}
+                className="w-5 h-5 bg-slate-900 border-slate-600 rounded focus:ring-blue-500"
+              />
+              <span className="text-sm text-slate-300">
+                Enable AI Critique (Second Opinion)
+              </span>
+            </label>
+            <p className="text-xs text-slate-500 ml-8">
+              When enabled, a second AI call will critique each BUY/SELL recommendation before execution.
+              The critique can lower confidence if it finds flaws in the reasoning. This doubles LLM API usage but improves decision quality.
+            </p>
+          </div>
+
           <div className="mt-4 p-3 bg-slate-700/50 rounded-lg">
             <p className="text-xs text-slate-400">
               <strong className="text-slate-300">How it works:</strong> The bot scans your watchlist at the specified interval during market hours.

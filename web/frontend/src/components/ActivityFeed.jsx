@@ -92,6 +92,10 @@ const ActivityFeed = ({ activities }) => {
         return InformationCircleIcon;
       case 'pending_trades_update':
         return ClockIcon;
+      case 'session_closing':
+        return ClockIcon;
+      case 'positions_closed':
+        return CurrencyDollarIcon;
       default:
         return InformationCircleIcon;
     }
@@ -157,6 +161,10 @@ const ActivityFeed = ({ activities }) => {
         return 'text-orange-400';
       case 'pending_trades_update':
         return 'text-yellow-400';
+      case 'session_closing':
+        return 'text-orange-400';
+      case 'positions_closed':
+        return 'text-green-400';
       default:
         return 'text-gray-400';
     }
@@ -197,6 +205,10 @@ const ActivityFeed = ({ activities }) => {
         return 'bg-orange-900/20 border-slate-700';
       case 'analyzing_symbol':
         return 'bg-blue-900/10 border-slate-700';
+      case 'session_closing':
+        return 'bg-orange-900/30 border-orange-600';
+      case 'positions_closed':
+        return 'bg-green-900/30 border-green-600';
       default:
         return 'bg-gray-900/20 border-slate-700';
     }
@@ -476,14 +488,110 @@ const ActivityFeed = ({ activities }) => {
               </div>
             )}
 
-            {/* AI Reasoning */}
-            <div>
-              <div className="flex items-center gap-1 text-xs text-slate-500 mb-1">
-                <SparklesIcon className="h-3 w-3" />
-                AI Analysis {data.llm_provider && `(${data.llm_provider})`}
+            {/* Bull/Bear/Judge Debate Section */}
+            {data.bull_case && data.bear_case ? (
+              <div className="space-y-3">
+                {/* Bull Case */}
+                <div className="p-3 bg-green-900/20 border border-green-700 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <ArrowTrendingUpIcon className="h-4 w-4 text-green-400" />
+                      <span className="text-sm font-semibold text-green-400">Bull Case (Buy)</span>
+                    </div>
+                    {data.bull_confidence && (
+                      <span className="text-xs text-green-300">
+                        {data.bull_confidence}% confident
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-300 leading-relaxed">{data.bull_case}</p>
+                  {data.bull_signals && data.bull_signals.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {data.bull_signals.map((signal, idx) => (
+                        <span key={idx} className="text-xs px-2 py-0.5 bg-green-900/30 text-green-300 rounded">
+                          {signal}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Bear Case */}
+                <div className="p-3 bg-red-900/20 border border-red-700 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <ArrowTrendingDownIcon className="h-4 w-4 text-red-400" />
+                      <span className="text-sm font-semibold text-red-400">Bear Case (Sell)</span>
+                    </div>
+                    {data.bear_confidence && (
+                      <span className="text-xs text-red-300">
+                        {data.bear_confidence}% confident
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-300 leading-relaxed">{data.bear_case}</p>
+                  {data.bear_signals && data.bear_signals.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {data.bear_signals.map((signal, idx) => (
+                        <span key={idx} className="text-xs px-2 py-0.5 bg-red-900/30 text-red-300 rounded">
+                          {signal}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Judge Decision */}
+                <div className={`p-3 rounded-lg border ${
+                  data.winning_case === 'BULL'
+                    ? 'bg-green-900/30 border-green-500'
+                    : data.winning_case === 'BEAR'
+                    ? 'bg-red-900/30 border-red-500'
+                    : 'bg-slate-800/50 border-slate-600'
+                }`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <SparklesIcon className="h-4 w-4 text-amber-400" />
+                    <span className="text-sm font-semibold text-amber-400">Judge Decision</span>
+                    {data.winning_case && (
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        data.winning_case === 'BULL'
+                          ? 'bg-green-600 text-white'
+                          : data.winning_case === 'BEAR'
+                          ? 'bg-red-600 text-white'
+                          : 'bg-slate-600 text-slate-200'
+                      }`}>
+                        {data.winning_case === 'BULL' ? '🐂 Bull Wins' :
+                         data.winning_case === 'BEAR' ? '🐻 Bear Wins' :
+                         '⚖️ Neither'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-slate-300 leading-relaxed">
+                    {data.judge_reasoning || data.reasoning}
+                  </p>
+                </div>
               </div>
-              <p className="text-sm text-slate-300 leading-relaxed">{data.reasoning}</p>
-            </div>
+            ) : (
+              /* Standard single AI analysis (non-debate mode) */
+              <div className="mb-3">
+                <div className="flex items-center gap-1 text-xs text-slate-500 mb-1">
+                  <SparklesIcon className="h-3 w-3" />
+                  AI Analysis {data.llm_provider && `(${data.llm_provider})`}
+                </div>
+                <p className="text-sm text-slate-300 leading-relaxed">{data.reasoning}</p>
+
+                {/* Why Not The Opposite (only in non-debate mode) */}
+                {data.contrary_reasoning && (
+                  <div className="mt-3">
+                    <div className="flex items-center gap-1 text-xs text-slate-500 mb-1">
+                      <ArrowTrendingDownIcon className="h-3 w-3" />
+                      Why Not {data.signal === 'BUY' ? 'SELL' : data.signal === 'SELL' ? 'BUY' : 'Trade'}?
+                    </div>
+                    <p className="text-sm text-slate-400 leading-relaxed italic">{data.contrary_reasoning}</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -749,6 +857,16 @@ const ActivityFeed = ({ activities }) => {
       case 'market_closed':
         title = 'Market Closed';
         description = activity.data.message || 'Waiting for market to open...';
+        break;
+      case 'session_closing':
+        title = 'End of Session';
+        description = `Market closing in ${activity.data.minutes_remaining} minutes - closing all positions`;
+        break;
+      case 'positions_closed':
+        title = 'Positions Closed';
+        const pnl = activity.data.total_pnl;
+        const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
+        description = `${activity.data.message} (P&L: ${pnlStr})`;
         break;
       case 'error':
         title = 'Error';

@@ -5,7 +5,7 @@ import {
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
   ChartBarIcon,
-  CameraIcon,
+  ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline';
 import apiClient from '../utils/api';
 import { formatCurrency, formatPercent } from '../utils/formatters';
@@ -19,7 +19,7 @@ const Reports = () => {
   const [availableDates, setAvailableDates] = useState([]);
   const [selectedDate, setSelectedDate] = useState(null);
   const [report, setReport] = useState(null);
-  const [capturingSnapshot, setCapturingSnapshot] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   // Get today's date string
   const today = new Date().toISOString().split('T')[0];
@@ -78,18 +78,36 @@ const Reports = () => {
     }
   };
 
-  // Capture manual snapshot
-  const handleCaptureSnapshot = async (type = 'manual') => {
-    setCapturingSnapshot(true);
+  // Download PDF report
+  const handleDownloadPdf = async () => {
+    if (!selectedDate || !report) return;
+
+    setDownloadingPdf(true);
     try {
-      await apiClient.captureSnapshot(type);
-      // Refresh report to show new snapshot
-      await fetchReport(selectedDate);
+      const response = await fetch(`/api/reports/${selectedDate}/pdf`);
+      if (!response.ok) {
+        throw new Error(`Failed to download PDF: ${response.statusText}`);
+      }
+
+      // Create blob from response
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+
+      // Create temporary link and trigger download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `trading_report_${selectedDate}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+
+      // Cleanup
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
     } catch (err) {
-      console.error('Error capturing snapshot:', err);
-      setError(err.message || 'Failed to capture snapshot');
+      console.error('Error downloading PDF:', err);
+      setError(err.message || 'Failed to download PDF');
     } finally {
-      setCapturingSnapshot(false);
+      setDownloadingPdf(false);
     }
   };
 
@@ -194,16 +212,16 @@ const Reports = () => {
           />
         </div>
 
-        {/* Manual snapshot button (only for today) */}
-        {selectedDate === today && (
+        {/* Download PDF button (only when report exists) */}
+        {report && (
           <div className="mb-6 flex justify-end">
             <button
-              onClick={() => handleCaptureSnapshot('manual')}
-              disabled={capturingSnapshot}
-              className="flex items-center px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors disabled:opacity-50"
+              onClick={handleDownloadPdf}
+              disabled={downloadingPdf}
+              className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50"
             >
-              <CameraIcon className="h-5 w-5 mr-2" />
-              {capturingSnapshot ? 'Capturing...' : 'Capture Snapshot'}
+              <ArrowDownTrayIcon className="h-5 w-5 mr-2" />
+              {downloadingPdf ? 'Downloading...' : 'Download PDF'}
             </button>
           </div>
         )}
@@ -272,16 +290,6 @@ const Reports = () => {
                 : "No report data is available for this date."
               }
             </p>
-            {selectedDate === today && (
-              <button
-                onClick={() => handleCaptureSnapshot('manual')}
-                disabled={capturingSnapshot}
-                className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50"
-              >
-                <CameraIcon className="h-5 w-5 inline mr-2" />
-                {capturingSnapshot ? 'Capturing...' : 'Capture Starting Snapshot'}
-              </button>
-            )}
           </div>
         )}
 

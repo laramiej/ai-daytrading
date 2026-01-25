@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Bot Scheduling
     scan_interval_minutes: int = Field(5, env="SCAN_INTERVAL_MINUTES")  # How often to scan for opportunities
     min_confidence_threshold: float = Field(70.0, env="MIN_CONFIDENCE_THRESHOLD")  # Minimum confidence to act on signals
+    enable_ai_critique: bool = Field(False, env="ENABLE_AI_CRITIQUE")  # Enable second AI call to critique recommendations
 
     # Risk Management
     stop_loss_percentage: float = Field(2.0, env="STOP_LOSS_PERCENTAGE")
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
     max_open_positions: int = Field(5, env="MAX_OPEN_POSITIONS")
     enable_short_selling: bool = Field(True, env="ENABLE_SHORT_SELLING")
     max_position_exposure_percent: float = Field(25.0, env="MAX_POSITION_EXPOSURE_PERCENT")  # Max % of total exposure per position
+    close_positions_at_session_end: bool = Field(False, env="CLOSE_POSITIONS_AT_SESSION_END")  # Auto-close all positions when market closes
 
     # Sentiment Analysis (Phase 2)
     enable_google_trends: bool = Field(True, env="ENABLE_GOOGLE_TRENDS")

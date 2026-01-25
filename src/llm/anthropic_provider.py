@@ -110,16 +110,36 @@ CRITICAL - Your "reasoning" MUST reference INTRADAY data:
 
 Your reasoning should be 3-5 sentences citing specific INTRADAY indicator values.
 
-Format your response as JSON:
+DECISION FRAMEWORK - Be willing to recommend any signal:
+- SELL when: Price below VWAP with negative momentum, overbought RSI rejecting, below pivot, bearish divergences, OR when holding a profitable long that shows reversal signs
+- BUY when: Price above VWAP with positive momentum, oversold RSI bouncing, above pivot, bullish setups
+- HOLD when: Mixed signals, choppy price action, low volume, unclear direction, or near key decision points
+
+CRITICAL - DEFEND YOUR DECISION:
+You MUST explain why you are NOT recommending the opposite action. This forces you to consider both sides:
+- If recommending BUY: Explain specifically why SELL is wrong (e.g., "Not selling because momentum is still positive and price is above VWAP")
+- If recommending SELL: Explain specifically why BUY is wrong (e.g., "Not buying because RSI is overbought at 78 and price rejected R1")
+- If recommending HOLD: Explain why neither BUY nor SELL is appropriate right now
+
+Format your response as valid JSON (no comments, no placeholders):
 {
-  "signal": "BUY" | "SELL" | "HOLD",
-  "confidence": 0-100,
-  "reasoning": "Detailed explanation citing INTRADAY indicators (VWAP, RSI_14min, momentum_5min, intraday pivots, etc). 3-5 sentences required.",
-  "entry_price": <number - current market price for entry>,
-  "position_size_recommendation": "SMALL" | "MEDIUM" | "LARGE",
-  "risk_factors": ["list", "of", "intraday", "risks"],
-  "time_horizon": "X minutes" or "X hours" (must be INTRADAY)
-}"""
+  "signal": "HOLD",
+  "confidence": 65,
+  "reasoning": "Your detailed explanation here citing INTRADAY indicators.",
+  "contrary_reasoning": "Explain why the OPPOSITE signal is wrong. If BUY, why not SELL? If SELL, why not BUY?",
+  "entry_price": 150.25,
+  "position_size_recommendation": "MEDIUM",
+  "risk_factors": ["risk1", "risk2"],
+  "time_horizon": "2 hours"
+}
+
+IMPORTANT:
+- Return ONLY valid JSON
+- Use actual numbers for entry_price (the current market price)
+- signal must be exactly one of: "BUY", "SELL", or "HOLD"
+- contrary_reasoning is REQUIRED - you must defend your decision by explaining why the opposite is wrong
+- Be objective - SELL signals are just as valid as BUY signals when conditions warrant
+- If short selling is enabled and you see bearish signals, SELL to open a short position is valid"""
 
         prompt = f"""Analyze the following market data and provide a day trading recommendation:
 
