@@ -160,14 +160,21 @@ class TradingStrategy:
 
                 context = "\n".join(context_parts)
 
-            # Choose analysis method based on critique/debate setting
-            if self.enable_critique:
+            # Choose analysis method based on critique/debate setting and provider
+            # n8n provider handles all analysis externally, so skip debate system
+            is_n8n = self.llm_provider.provider_name == "n8n"
+
+            if self.enable_critique and not is_n8n:
                 # Use Bull/Bear/Judge debate system (3 AI calls)
                 logger.info(f"🎭 Using DEBATE system for {symbol} (Bull vs Bear vs Judge)")
                 signal = self._run_debate(symbol, market_data)
             else:
-                # Use single AI call (original method)
-                logger.info(f"Sending analysis request to {self.llm_provider.provider_name}...")
+                # Use single AI call (original method, or n8n workflow)
+                if is_n8n:
+                    logger.info(f"🔗 Using n8n workflow for {symbol} (external analysis)")
+                else:
+                    logger.info(f"Sending analysis request to {self.llm_provider.provider_name}...")
+
                 response = self.llm_provider.analyze_market_data(
                     market_data=market_data,
                     context=context

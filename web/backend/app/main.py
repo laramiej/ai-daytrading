@@ -705,6 +705,7 @@ async def get_settings():
         "enable_auto_trading": state.settings.enable_auto_trading,
         "enable_finnhub": state.settings.enable_finnhub,
         "default_llm_provider": state.settings.default_llm_provider,
+        "n8n_webhook_url": state.settings.n8n_webhook_url or "",
         "watchlist": state.settings.get_watchlist(),
         # Bot scheduling
         "scan_interval_minutes": state.settings.scan_interval_minutes,
@@ -759,6 +760,7 @@ async def update_settings(updated_settings: dict):
                     'enable_auto_trading': 'ENABLE_AUTO_TRADING',
                     'enable_finnhub': 'ENABLE_FINNHUB',
                     'default_llm_provider': 'DEFAULT_LLM_PROVIDER',
+                    'n8n_webhook_url': 'N8N_WEBHOOK_URL',
                     'scan_interval_minutes': 'SCAN_INTERVAL_MINUTES',
                     'min_confidence_threshold': 'MIN_CONFIDENCE_THRESHOLD',
                     'close_positions_at_session_end': 'CLOSE_POSITIONS_AT_SESSION_END',
@@ -811,6 +813,7 @@ async def update_settings(updated_settings: dict):
             'enable_auto_trading': 'ENABLE_AUTO_TRADING',
             'enable_finnhub': 'ENABLE_FINNHUB',
             'default_llm_provider': 'DEFAULT_LLM_PROVIDER',
+            'n8n_webhook_url': 'N8N_WEBHOOK_URL',
             'scan_interval_minutes': 'SCAN_INTERVAL_MINUTES',
             'min_confidence_threshold': 'MIN_CONFIDENCE_THRESHOLD',
             'close_positions_at_session_end': 'CLOSE_POSITIONS_AT_SESSION_END',
@@ -820,6 +823,8 @@ async def update_settings(updated_settings: dict):
             'anthropic_api_key': 'ANTHROPIC_API_KEY',
             'openai_api_key': 'OPENAI_API_KEY',
             'finnhub_api_key': 'FINNHUB_API_KEY',
+            'google_api_key': 'GOOGLE_API_KEY',
+            'n8n_webhook_url': 'N8N_WEBHOOK_URL',
             'watchlist': 'WATCHLIST',
         }
 

@@ -241,29 +241,31 @@ const Settings = () => {
               />
             </div>
 
-            <div>
+            <div className={formData.default_llm_provider === 'n8n' ? 'opacity-50' : ''}>
               <label className="block text-sm font-medium text-slate-300 mb-2">
-                Anthropic API Key
+                Anthropic API Key {formData.default_llm_provider === 'n8n' && <span className="text-slate-500">(not used with n8n)</span>}
               </label>
               <input
                 type="password"
                 value={formData.anthropic_api_key || ''}
                 onChange={(e) => handleInputChange('anthropic_api_key', e.target.value)}
                 placeholder="Enter your Anthropic API key"
-                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                disabled={formData.default_llm_provider === 'n8n'}
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed"
               />
             </div>
 
-            <div>
+            <div className={formData.default_llm_provider === 'n8n' ? 'opacity-50' : ''}>
               <label className="block text-sm font-medium text-slate-300 mb-2">
-                OpenAI API Key (Optional)
+                OpenAI API Key (Optional) {formData.default_llm_provider === 'n8n' && <span className="text-slate-500">(not used with n8n)</span>}
               </label>
               <input
                 type="password"
                 value={formData.openai_api_key || ''}
                 onChange={(e) => handleInputChange('openai_api_key', e.target.value)}
                 placeholder="Enter your OpenAI API key"
-                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                disabled={formData.default_llm_provider === 'n8n'}
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -299,16 +301,17 @@ const Settings = () => {
               </div>
             </div>
 
-            <div>
+            <div className={formData.default_llm_provider === 'n8n' ? 'opacity-50' : ''}>
               <label className="block text-sm font-medium text-slate-300 mb-2">
-                Google API Key (Optional)
+                Google API Key (Optional) {formData.default_llm_provider === 'n8n' && <span className="text-slate-500">(not used with n8n)</span>}
               </label>
               <input
                 type="password"
                 value={formData.google_api_key || ''}
                 onChange={(e) => handleInputChange('google_api_key', e.target.value)}
                 placeholder="Enter your Google API key"
-                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                disabled={formData.default_llm_provider === 'n8n'}
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -318,14 +321,53 @@ const Settings = () => {
               </label>
               <select
                 value={formData.default_llm_provider || 'anthropic'}
-                onChange={(e) => handleInputChange('default_llm_provider', e.target.value)}
+                onChange={(e) => {
+                  const newProvider = e.target.value;
+                  handleInputChange('default_llm_provider', newProvider);
+                  // Clear irrelevant API keys when switching to n8n
+                  if (newProvider === 'n8n') {
+                    // n8n doesn't need traditional LLM keys
+                  }
+                }}
                 className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
               >
                 <option value="anthropic">Anthropic (Claude)</option>
                 <option value="openai">OpenAI (GPT)</option>
                 <option value="google">Google (Gemini)</option>
+                <option value="n8n">n8n Workflow (External)</option>
               </select>
+              {formData.default_llm_provider === 'n8n' && (
+                <p className="text-xs text-amber-400 mt-2">
+                  n8n mode delegates all analysis to an external n8n workflow. Traditional LLM API keys are not used.
+                </p>
+              )}
             </div>
+
+            {/* n8n Webhook URL - only shown when n8n is selected */}
+            {formData.default_llm_provider === 'n8n' && (
+              <div className="mt-4 p-4 bg-slate-700/50 rounded-lg border border-amber-600/30">
+                <label className="block text-sm font-medium text-amber-300 mb-2">
+                  n8n Webhook URL
+                </label>
+                <input
+                  type="text"
+                  value={formData.n8n_webhook_url || ''}
+                  onChange={(e) => handleInputChange('n8n_webhook_url', e.target.value)}
+                  placeholder="https://your-n8n-instance.com/webhook/stock-analysis"
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                />
+                <p className="text-xs text-slate-400 mt-2">
+                  The webhook URL from your n8n stock analysis workflow. Import the workflow from <code className="text-amber-400">n8n/stock_analysis_workflow.json</code>.
+                </p>
+              </div>
+            )}
+
+            {/* Note about provider requirements */}
+            {formData.default_llm_provider !== 'n8n' && (
+              <p className="text-xs text-slate-500 mt-2">
+                Make sure you have a valid API key configured for the selected provider above.
+              </p>
+            )}
           </div>
         </div>
 
