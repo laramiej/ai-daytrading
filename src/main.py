@@ -76,11 +76,18 @@ class DayTradingBot:
         # Initialize portfolio context
         self.portfolio = PortfolioContext(self.broker, self.risk_manager)
 
+        # Auto-disable AI critique/debate for n8n provider (n8n doesn't support separate bull/bear/judge calls)
+        enable_critique = getattr(self.settings, 'enable_ai_critique', False)
+        if self.settings.default_llm_provider == "n8n" and enable_critique:
+            logger.warning("AI critique/debate is not supported with n8n provider - auto-disabling")
+            enable_critique = False
+
         # Initialize trading strategy with portfolio context
         self.strategy = TradingStrategy(
             self.llm_provider,
             self.market_analyzer,
-            self.portfolio  # Pass portfolio context
+            self.portfolio,  # Pass portfolio context
+            enable_critique=enable_critique
         )
 
         # Initialize approval workflow
