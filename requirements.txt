@@ -41,6 +41,7 @@ reportlab>=4.0.0
 # Web Application
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
+PyJWT>=2.8.0  # JWT authentication
 # Note: websockets version constrained by alpaca-py requirement (<12.0.0)
 # FastAPI and uvicorn work fine with websockets 11.x
 python-socketio==5.11.0

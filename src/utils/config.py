@@ -15,6 +15,13 @@ load_dotenv()
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
 
+    # Authentication (required for web dashboard)
+    auth_username: str = Field("admin", env="AUTH_USERNAME")
+    auth_password: str = Field(..., env="AUTH_PASSWORD")  # Required - no default for security
+    jwt_secret_key: str = Field(..., env="JWT_SECRET_KEY")  # Required - no default for security
+    jwt_algorithm: str = Field("HS256", env="JWT_ALGORITHM")
+    jwt_expiration_hours: int = Field(24, env="JWT_EXPIRATION_HOURS")
+
     # Alpaca API Keys (optional at startup, required to run bot)
     alpaca_api_key: Optional[str] = Field(None, env="ALPACA_API_KEY")
     alpaca_secret_key: Optional[str] = Field(None, env="ALPACA_SECRET_KEY")

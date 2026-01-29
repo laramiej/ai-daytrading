@@ -11,7 +11,7 @@ project_root = str(Path(__file__).parent.parent.parent.parent)
 sys.path.insert(0, project_root)
 sys.path.insert(0, os.path.join(project_root, 'src'))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
@@ -22,6 +22,10 @@ from datetime import datetime
 import json
 
 from src.utils import load_settings
+from .auth import (
+    AuthManager, LoginRequest, TokenResponse,
+    init_auth_manager, get_current_user, get_auth_manager
+)
 from src.broker import AlpacaBroker
 from src.reports import DailyReportManager
 
@@ -47,9 +51,16 @@ app = FastAPI(
 )
 
 # CORS middleware for React frontend
+# In production, set CORS_ORIGINS env var to restrict origins
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env:
+    cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+else:
+    cors_origins = ["*"]  # Allow all in development
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -501,6 +512,11 @@ async def startup_event():
     """Initialize the trading system on startup"""
     try:
         await state.initialize()
+
+        # Initialize authentication
+        if state.settings:
+            init_auth_manager(state.settings)
+
         logger.info("FastAPI application started")
     except Exception as e:
         logger.error(f"Startup failed: {e}")
@@ -516,7 +532,7 @@ async def shutdown_event():
 # Health check endpoint
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint (public - no auth required)"""
     is_configured, missing = state.settings.is_fully_configured() if state.settings else (False, ["Settings not loaded"])
     return {
         "status": "healthy",
@@ -526,9 +542,65 @@ async def health_check():
         "initialized": state.initialized
     }
 
+
+# ============================================
+# Authentication Endpoints
+# ============================================
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+async def login(request: LoginRequest):
+    """
+    Authenticate user and return JWT token
+
+    This endpoint is public - no authentication required
+    """
+    auth = get_auth_manager()
+
+    if not auth.verify_credentials(request.username, request.password):
+        logger.warning(f"Failed login attempt for user: {request.username}")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
+
+    token, expires_in = auth.create_access_token()
+    logger.info(f"User {request.username} logged in successfully")
+
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        expires_in=expires_in
+    )
+
+
+@app.get("/api/auth/verify")
+async def verify_auth(current_user: str = Depends(get_current_user)):
+    """Verify that the current token is valid"""
+    return {
+        "authenticated": True,
+        "username": current_user,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/api/auth/logout")
+async def logout(current_user: str = Depends(get_current_user)):
+    """
+    Logout endpoint
+
+    Note: JWT tokens are stateless, so this mainly serves as a
+    confirmation. The client should discard the token.
+    """
+    logger.info(f"User {current_user} logged out")
+    return {
+        "status": "success",
+        "message": "Logged out successfully"
+    }
+
+
 # Configuration status endpoint
 @app.get("/api/config/status")
-async def get_config_status():
+async def get_config_status(current_user: str = Depends(get_current_user)):
     """Check if the system is fully configured and ready to run"""
     if state.settings is None:
         return {
@@ -549,7 +621,7 @@ async def get_config_status():
 
 # Initialize/reinitialize trading system after config changes
 @app.post("/api/config/initialize")
-async def initialize_trading_system():
+async def initialize_trading_system(current_user: str = Depends(get_current_user)):
     """Initialize or reinitialize the trading system after configuration changes"""
     if state.settings is None:
         raise HTTPException(status_code=500, detail="Settings not loaded")
@@ -594,7 +666,7 @@ async def initialize_trading_system():
 
 # Get trading status
 @app.get("/api/status")
-async def get_status():
+async def get_status(current_user: str = Depends(get_current_user)):
     """Get current trading system status"""
     # Return limited status if not fully configured
     if not state.initialized or state.broker is None:
@@ -634,7 +706,7 @@ async def get_status():
 
 # Get positions
 @app.get("/api/positions")
-async def get_positions():
+async def get_positions(current_user: str = Depends(get_current_user)):
     """Get all current positions with associated open orders (stop-loss/take-profit)"""
     if state.broker is None:
         return {
@@ -692,7 +764,7 @@ def _mask_api_key(key: Optional[str]) -> str:
 
 # Get settings
 @app.get("/api/settings")
-async def get_settings():
+async def get_settings(current_user: str = Depends(get_current_user)):
     """Get current trading settings"""
     is_configured, missing = state.settings.is_fully_configured() if state.settings else (False, [])
 
@@ -729,7 +801,7 @@ async def get_settings():
 
 # Update settings
 @app.put("/api/settings")
-async def update_settings(updated_settings: dict):
+async def update_settings(updated_settings: dict, current_user: str = Depends(get_current_user)):
     """Update trading settings and save to .env file"""
     try:
         import os
@@ -1238,7 +1310,7 @@ async def run_trading_bot_loop(scan_interval: int = 300, min_confidence: float =
 
 # Bot control endpoints
 @app.post("/api/bot/start")
-async def start_bot():
+async def start_bot(current_user: str = Depends(get_current_user)):
     """Start the trading bot"""
     if state.bot_running:
         raise HTTPException(status_code=400, detail="Bot is already running")
@@ -1304,7 +1376,7 @@ async def start_bot():
         raise HTTPException(status_code=500, detail=f"Failed to start bot: {str(e)}")
 
 @app.post("/api/bot/stop")
-async def stop_bot():
+async def stop_bot(current_user: str = Depends(get_current_user)):
     """Stop the trading bot"""
     if not state.bot_running:
         raise HTTPException(status_code=400, detail="Bot is not running")
@@ -1342,7 +1414,7 @@ async def stop_bot():
 
 # Pending trades endpoints
 @app.get("/api/pending-trades")
-async def get_pending_trades():
+async def get_pending_trades(current_user: str = Depends(get_current_user)):
     """Get all pending trades awaiting approval"""
     return {
         "pending_trades": state.get_all_pending_trades(),
@@ -1351,7 +1423,7 @@ async def get_pending_trades():
     }
 
 @app.post("/api/pending-trades/{trade_id}/approve")
-async def approve_trade(trade_id: str):
+async def approve_trade(trade_id: str, current_user: str = Depends(get_current_user)):
     """Approve and execute a pending trade"""
     trade = state.get_pending_trade(trade_id)
     if not trade:
@@ -1448,7 +1520,7 @@ async def approve_trade(trade_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to execute trade: {str(e)}")
 
 @app.post("/api/pending-trades/{trade_id}/reject")
-async def reject_trade(trade_id: str):
+async def reject_trade(trade_id: str, current_user: str = Depends(get_current_user)):
     """Reject a pending trade"""
     trade = state.get_pending_trade(trade_id)
     if not trade:
@@ -1489,7 +1561,7 @@ async def reject_trade(trade_id: str):
     }
 
 @app.post("/api/pending-trades/clear")
-async def clear_pending_trades():
+async def clear_pending_trades(current_user: str = Depends(get_current_user)):
     """Clear all pending trades"""
     count = len(state.pending_trades)
     state.pending_trades.clear()
@@ -1513,7 +1585,7 @@ async def clear_pending_trades():
 # ============================================
 
 @app.get("/api/reports")
-async def list_reports():
+async def list_reports(current_user: str = Depends(get_current_user)):
     """Get list of available daily reports"""
     try:
         report_dates = state.report_manager.list_available_reports()
@@ -1534,7 +1606,7 @@ async def list_reports():
 
 
 @app.get("/api/reports/today")
-async def get_today_report():
+async def get_today_report(current_user: str = Depends(get_current_user)):
     """Get today's report (may be incomplete/in-progress)"""
     try:
         report = state.report_manager.get_or_create_today_report()
@@ -1548,7 +1620,7 @@ async def get_today_report():
 
 
 @app.get("/api/reports/{date}")
-async def get_report(date: str):
+async def get_report(date: str, current_user: str = Depends(get_current_user)):
     """Get daily report for a specific date (YYYY-MM-DD format)"""
     # Validate date format
     try:
@@ -1573,7 +1645,7 @@ async def get_report(date: str):
 
 
 @app.post("/api/reports/snapshot")
-async def capture_snapshot(body: dict = None):
+async def capture_snapshot(body: dict = None, current_user: str = Depends(get_current_user)):
     """Manually capture a portfolio snapshot"""
     if not state.initialized or state.broker is None:
         raise HTTPException(status_code=503, detail="Trading system not initialized")
@@ -1608,7 +1680,7 @@ async def capture_snapshot(body: dict = None):
 
 
 @app.get("/api/reports/{date}/pdf")
-async def download_report_pdf(date: str):
+async def download_report_pdf(date: str, current_user: str = Depends(get_current_user)):
     """Download a daily report as a PDF file"""
     from io import BytesIO
 
@@ -1640,15 +1712,32 @@ async def download_report_pdf(date: str):
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time updates"""
+async def websocket_endpoint(websocket: WebSocket, token: str = Query(None)):
+    """WebSocket endpoint for real-time updates (requires token query param)"""
+    # Verify token before accepting connection
+    if token is None:
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+
+    try:
+        auth = get_auth_manager()
+        username = auth.verify_token(token)
+        if username is None:
+            await websocket.close(code=4001, reason="Invalid or expired token")
+            return
+    except Exception as e:
+        logger.error(f"WebSocket auth error: {e}")
+        await websocket.close(code=4001, reason="Authentication error")
+        return
+
     await manager.connect(websocket)
+    logger.info(f"WebSocket connected for user: {username}")
     try:
         while True:
             # Keep connection alive and receive messages
             data = await websocket.receive_text()
             logger.debug(f"Received WebSocket message: {data}")
-            
+
             # Echo back for now (can be expanded for client commands)
             await websocket.send_json({
                 "type": "ack",

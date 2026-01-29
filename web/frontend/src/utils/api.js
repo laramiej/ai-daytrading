@@ -16,9 +16,39 @@ const api = axios.create({
   },
 });
 
+// Add auth token to all requests
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Handle 401 errors (redirect to login)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token expired or invalid - clear and redirect to login
+      localStorage.removeItem('auth_token');
+      // Redirect to login page
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 // API endpoints
 export const apiClient = {
-  // Health check
+  // Health check (public)
   health: async () => {
     const response = await api.get('/api/health');
     return response.data;
@@ -123,6 +153,16 @@ export const apiClient = {
     const response = await api.post('/api/reports/snapshot', { snapshot_type: snapshotType });
     return response.data;
   },
+};
+
+// Helper to get WebSocket URL with auth token
+export const getAuthenticatedWebSocketUrl = () => {
+  const token = localStorage.getItem('auth_token');
+  const wsBase = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+  if (token) {
+    return `${wsBase}/ws?token=${encodeURIComponent(token)}`;
+  }
+  return `${wsBase}/ws`;
 };
 
 export default apiClient;
