@@ -11,7 +11,7 @@ project_root = str(Path(__file__).parent.parent.parent.parent)
 sys.path.insert(0, project_root)
 sys.path.insert(0, os.path.join(project_root, 'src'))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
@@ -22,6 +22,10 @@ from datetime import datetime
 import json
 
 from src.utils import load_settings
+from .auth import (
+    AuthManager, LoginRequest, TokenResponse,
+    init_auth_manager, get_current_user, get_auth_manager
+)
 from src.broker import AlpacaBroker
 from src.reports import DailyReportManager
 
@@ -47,9 +51,16 @@ app = FastAPI(
 )
 
 # CORS middleware for React frontend
+# In production, set CORS_ORIGINS env var to restrict origins
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env:
+    cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+else:
+    cors_origins = ["*"]  # Allow all in development
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -495,6 +506,11 @@ async def startup_event():
     """Initialize the trading system on startup"""
     try:
         await state.initialize()
+
+        # Initialize authentication
+        if state.settings:
+            init_auth_manager(state.settings)
+
         logger.info("FastAPI application started")
     except Exception as e:
         logger.error(f"Startup failed: {e}")
@@ -510,7 +526,7 @@ async def shutdown_event():
 # Health check endpoint
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint (public - no auth required)"""
     is_configured, missing = state.settings.is_fully_configured() if state.settings else (False, ["Settings not loaded"])
     return {
         "status": "healthy",
@@ -520,9 +536,65 @@ async def health_check():
         "initialized": state.initialized
     }
 
+
+# ============================================
+# Authentication Endpoints
+# ============================================
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+async def login(request: LoginRequest):
+    """
+    Authenticate user and return JWT token
+
+    This endpoint is public - no authentication required
+    """
+    auth = get_auth_manager()
+
+    if not auth.verify_credentials(request.username, request.password):
+        logger.warning(f"Failed login attempt for user: {request.username}")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password"
+        )
+
+    token, expires_in = auth.create_access_token()
+    logger.info(f"User {request.username} logged in successfully")
+
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        expires_in=expires_in
+    )
+
+
+@app.get("/api/auth/verify")
+async def verify_auth(current_user: str = Depends(get_current_user)):
+    """Verify that the current token is valid"""
+    return {
+        "authenticated": True,
+        "username": current_user,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/api/auth/logout")
+async def logout(current_user: str = Depends(get_current_user)):
+    """
+    Logout endpoint
+
+    Note: JWT tokens are stateless, so this mainly serves as a
+    confirmation. The client should discard the token.
+    """
+    logger.info(f"User {current_user} logged out")
+    return {
+        "status": "success",
+        "message": "Logged out successfully"
+    }
+
+
 # Configuration status endpoint
 @app.get("/api/config/status")
-async def get_config_status():
+async def get_config_status(current_user: str = Depends(get_current_user)):
     """Check if the system is fully configured and ready to run"""
     if state.settings is None:
         return {

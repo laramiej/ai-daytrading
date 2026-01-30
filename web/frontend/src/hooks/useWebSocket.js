@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+import { getAuthenticatedWebSocketUrl } from '../utils/api';
 
 export const useWebSocket = (onMessage) => {
   const [isConnected, setIsConnected] = useState(false);
@@ -21,8 +20,16 @@ export const useWebSocket = (onMessage) => {
       return;
     }
 
+    // Check if we have an auth token
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      console.log('No auth token, skipping WebSocket connection');
+      return;
+    }
+
     try {
-      const ws = new WebSocket(`${WS_URL}/ws`);
+      const wsUrl = getAuthenticatedWebSocketUrl();
+      const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         console.log('WebSocket connected');
@@ -45,9 +52,15 @@ export const useWebSocket = (onMessage) => {
         console.error('WebSocket error:', error);
       };
 
-      ws.onclose = () => {
-        console.log('WebSocket disconnected');
+      ws.onclose = (event) => {
+        console.log('WebSocket disconnected', event.code, event.reason);
         setIsConnected(false);
+
+        // Don't reconnect if closed due to auth error (4001)
+        if (event.code === 4001) {
+          console.log('WebSocket closed due to authentication error');
+          return;
+        }
 
         // Attempt to reconnect after 3 seconds
         reconnectTimeoutRef.current = setTimeout(() => {
